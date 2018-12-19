@@ -29,3 +29,24 @@
 
 # CMake
 *.txt.user
+
+benchmarks/
+clSPARSE-build/
+clSPARSE-package/
+clsparseTimer/
+CMakeFiles/
+Externals/
+include/
+library/
+tests/
+third_party/
+x64/
+
+#Solution & Projects
+*.vcxproj.*
+*.vcxproj
+.vs/
+cmake_install.cmake
+CmakeCache.txt
+*.sln
+
