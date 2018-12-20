@@ -5,10 +5,10 @@
     #error "Required 32-bit atomics not supported by this OpenCL implemenation."
 #endif
 
-#define INT_PROD_NUM_SEGMENTS 16
+#define NIP_SEGMENTS 16
 
 __kernel
-void compute_ReorderRow_kernel(
+void compute_ReorderRowNip_kernel(
         __global const int *d_csrRowCIntProdNum,
         __global int *d_clIntPtr,
         __global int *d_csrRowCReorder,
@@ -23,12 +23,12 @@ void compute_ReorderRow_kernel(
     if(intSize == 0) location = atomic_add(&d_clIntPtr[0], 1);
     else if(intSize == 1) location = atomic_add(&d_clIntPtr[1], 1);
     else if(intSize == 2) location = atomic_add(&d_clIntPtr[2], 1);
-    else if(8192 < intSize) location = atomic_add(&d_clIntPtr[INT_PROD_NUM_SEGMENTS - 1], 1);
+    else if(8192 < intSize) location = atomic_add(&d_clIntPtr[NIP_SEGMENTS - 1], 1);
     else
     {
         int i;
         
-        for(i = 3; i < INT_PROD_NUM_SEGMENTS - 1; i++)
+        for(i = 3; i < NIP_SEGMENTS - 1; i++)
         {
             if((1 << (i - 2)) < intSize && intSize <= (1 << (i - 1)))
             {

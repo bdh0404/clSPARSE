@@ -46,13 +46,13 @@ void compute_nnzC_pwarp(
     int global_id = get_global_id(0);
     int rid = global_id / intSize;
 
-    if (rid >= bin) return;
-
     int local_id = get_local_id(0);
 
     hashtable[local_id] = -1;
     
     barrier(CLK_LOCAL_MEM_FENCE);
+
+	if (rid >= bin) return;
 
     int row_id = d_csrRowCReorder[ptr + rid];
     int start_col_index_A, stop_col_index_A;  // index_type
@@ -145,14 +145,14 @@ void compute_nnzC_tb(
     int stop_col_index_A = d_csrRowPtrA[row_id + 1];
     int nnz = 0;
 
-    for (i = start_col_index_A + local_id; i < stop_col_index_A; i += (local_size / 64))
+    for (i = start_col_index_A; i < stop_col_index_A; i++)
     {
         int row_id_B = d_csrColIndA[i];
         int start_col_index_B = d_csrRowPtrB[row_id_B];
         int stop_col_index_B  = d_csrRowPtrB[row_id_B + 1];
         int j;
 
-        for(j = start_col_index_B; j < stop_col_index_B; j += 64)
+        for(j = start_col_index_B + local_id; j < stop_col_index_B; j += local_size)
         {
             int key = d_csrColIndB[j];
             int hash = (bcol * HASH_CONST) % intSize;
@@ -282,7 +282,8 @@ void compute_nnzC_tb_global(
         __global int *d_csrRowCNnzSize,
         __global int *d_hashtable,
         const int fail_count,
-        const int d_hashsize)
+        const int d_hashsize
+        __global int *d_max_nnz)
 {
     int group_id = get_group_id(0);
 
@@ -341,6 +342,11 @@ void compute_nnzC_tb_global(
     atomic_add(&hashtable[0], nnz);
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if (local_id == 0) d_csrRowCNnzSize[row_id] = hashtable[0];
+    if (local_id == 0)
+    {
+        nnz = hashtable[0];
+        d_csrRowCNnzSize[row_id] = nnz;
+        atomic_max(d_max_nnz, nnz);
+    }
 }
 

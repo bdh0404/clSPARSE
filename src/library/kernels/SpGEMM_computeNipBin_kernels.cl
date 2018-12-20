@@ -29,10 +29,10 @@
     #error "Required 32-bit atomics not supported by this OpenCL implemenation."
 #endif
 
-#define INT_PROD_NUM_SEGMENTS 16
+#define NIP_SEGMENTS 16
 
 __kernel
-void compute_nnzIntBin_kernel(
+void compute_nipBin_kernel(
         __global const int *d_csrRowCIntProdNum,
         __local int *s_intBin,
         __global int *d_intBin,
@@ -42,7 +42,7 @@ void compute_nnzIntBin_kernel(
     int local_id = get_local_id(0);
     int i;
 
-    if(local_id < INT_PROD_NUM_SEGMENTS)
+    if(local_id < NIP_SEGMENTS)
         s_intBin[local_id] = 0;
 
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -59,10 +59,10 @@ void compute_nnzIntBin_kernel(
     else if(intSize == 2)
         atomic_add(&s_intBin[2], 1);
     else if(intSize > 8192)
-        atomic_add(&s_intBin[INT_PROD_NUM_SEGMENTS - 1], 1);
+        atomic_add(&s_intBin[NIP_SEGMENTS - 1], 1);
     else
     {
-        for(i = 3; i < NUM_SEGMENTS - 1; i++)
+        for(i = 3; i < NIP_SEGMENTS - 1; i++)
         {
             if((1 << (i - 2)) < intSize && intSize <= (1 << (i - 1)))
             {

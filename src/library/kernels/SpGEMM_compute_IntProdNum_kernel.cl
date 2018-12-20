@@ -64,44 +64,44 @@ void compute_IntProdNum_kernel(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 2 == 0)
-        s_max_intprod[local_id] += s_max_intprod[local_id + 1];
+    if(local_id < 128)
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 128]);
     
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 4 == 0)
-        s_max_intprod[local_id] += s_max_intprod[local_id + 2];
+    if(local_id < 64)
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 64]);
     
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 8 == 0)
-        s_max_intprod[local_id] += s_max_intprod[local_id + 4];
+    if(local_id < 32)
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 32]);
     
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 16 == 0)
-        s_max_intprod[local_id] += s_max_intprod[local_id + 8];
+    if(local_id < 16)
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 16]);
     
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 32 == 0)
-        s_max_intprod[local_id] += s_max_intprod[local_id + 16];
+    if(local_id < 8)
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 8]);
     
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 64 == 0)
-        s_max_intprod[local_id] += s_max_intprod[local_id + 32];
+    if(local_id < 4)
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 4]);
     
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 128 == 0)
-        s_max_intprod[local_id] += s_max_intprod[local_id + 64];
+    if(local_id < 2)
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 2]);
     
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id % 256 == 0)
+    if(local_id == 0)
     {
-        s_max_intprod[local_id] += s_max_intprod[local_id + 128];
+        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 1]);
         
         // and calculate real maximum number in GLOBAL memory
         atomic_max(d_max_intprod, s_max_intprod[0]);
