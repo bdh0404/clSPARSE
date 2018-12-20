@@ -30,15 +30,15 @@
 # CMake
 *.txt.user
 
-benchmarks/
-clSPARSE-build/
-clSPARSE-package/
-clsparseTimer/
+./benchmarks
+./clSPARSE-build
+./clSPARSE-package
 CMakeFiles/
+clsparseTimer/
+./CMakeFiles
 Externals/
 include/
-library/
-tests/
+./tests
 third_party/
 x64/
 
@@ -50,3 +50,6 @@ cmake_install.cmake
 CmakeCache.txt
 *.sln
 
+library/clSPARSEConfigVersion.cmake
+library/clSPARSEConfig.cmake
+library/clsparse_export.h
