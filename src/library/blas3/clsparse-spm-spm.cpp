@@ -45,7 +45,7 @@
 
 #define GROUPSIZE_256 256
 #define TUPLE_QUEUE 6
-#define NUM_SEGMENTS 128
+#define NUM_SEGMENTS 38
 //#define WARPSIZE_NV_2HEAP 64
 #define value_type float
 #define index_type int
@@ -315,16 +315,16 @@ clsparseStatus compute_nnzC_Ct_mergepath(int num_threads, int num_blocks, int j,
                 int accum = 0;
                 switch (mergebuffer_size)
                 {
-                case 256:
-                    accum = 512;
-                    break;
-                case 512:
-                    accum = 1024;
-                    break;
-                case 1024:
-                    accum = 2048;
-                    break;
-                case 2048:
+				case 256:
+					accum = 512;
+					break;
+				case 512:
+					accum = 1024;
+					break;
+				case 1024:
+					accum = 2048;
+					break;
+				case 2048:
                     accum = 2304;
                     break;
                 case 2304:
@@ -380,21 +380,21 @@ clsparseStatus compute_nnzC_Ct_mergepath(int num_threads, int num_blocks, int j,
             int accum = 0;
             switch (mergebuffer_size)
             {
-            case 256:
-                accum = 512;
-                break;
-            case 512:
-                accum = 1024;
-                break;
-            case 1024:
-                accum = 2048;
-                break;
-            case 2048:
-                accum = 2304;
-                break;
-            case 2304:
-                accum = 2 * (2304 * 2);
-                break;
+			case 256:
+				accum = 512;
+				break;
+			case 512:
+				accum = 1024;
+				break;
+			case 1024:
+				accum = 2048;
+				break;
+			case 2048:
+				accum = 2304;
+				break;
+			case 2304:
+				accum = 2 * (2304 * 2);
+				break;
             }
 
             nnzCt_new = *_nnzCt + counter * accum;
@@ -482,41 +482,41 @@ clsparseStatus compute_nnzC_Ct_opencl(int *_h_counter_one, cl_mem queue_one, cl_
               size_t num_blocks = ceil((double)counter / (double)num_threads);
                 run_status = compute_nnzC_Ct_2heap_noncoalesced_local(num_threads, num_blocks, j, counter, _h_counter_one[j], queue_one, csrRowPtrA, csrColIndA, csrValA, csrRowPtrB, csrColIndB, csrValB, csrRowPtrC, csrRowPtrCt, *csrColIndCt, *csrValCt, control);
             }
-            else if (j > 32 && j <= 64)
+            else if (j == 33)
             {
                 int num_threads = 32;
                 int num_blocks = counter;
 
                 run_status = compute_nnzC_Ct_bitonic_scan(num_threads, num_blocks, j, _h_counter_one[j], queue_one, csrRowPtrA, csrColIndA, csrValA, csrRowPtrB, csrColIndB, csrValB, csrRowPtrC, csrRowPtrCt, *csrColIndCt, *csrValCt, _n, control);
             }
-            else if (j > 64 && j <= 122)
+            else if (j == 34)
             {
                 int num_threads = 64;
                 int num_blocks = counter;
 
                 run_status = compute_nnzC_Ct_bitonic_scan(num_threads, num_blocks, j, _h_counter_one[j], queue_one, csrRowPtrA, csrColIndA, csrValA, csrRowPtrB, csrColIndB, csrValB, csrRowPtrC, csrRowPtrCt, *csrColIndCt, *csrValCt, _n, control);
             }
-            else if (j == 123)
+            else if (j == 35)
             {
                 int num_threads = 128;
                 int num_blocks = counter;
 
                 run_status = compute_nnzC_Ct_bitonic_scan(num_threads, num_blocks, j, _h_counter_one[j], queue_one, csrRowPtrA, csrColIndA, csrValA, csrRowPtrB, csrColIndB, csrValB, csrRowPtrC, csrRowPtrCt, *csrColIndCt, *csrValCt, _n, control);
             }
-            else if (j == 124)
-            {
-                int num_threads = 256;
-                int num_blocks = counter;
+			else if (j == 36)
+			{
+				int num_threads = 256;
+				int num_blocks = counter;
 
-                run_status = compute_nnzC_Ct_bitonic_scan(num_threads, num_blocks, j, _h_counter_one[j], queue_one, csrRowPtrA, csrColIndA, csrValA, csrRowPtrB, csrColIndB, csrValB, csrRowPtrC, csrRowPtrCt, *csrColIndCt, *csrValCt, _n, control);
-            }
-            else if (j == 127)
+				run_status = compute_nnzC_Ct_bitonic_scan(num_threads, num_blocks, j, _h_counter_one[j], queue_one, csrRowPtrA, csrColIndA, csrValA, csrRowPtrB, csrColIndB, csrValB, csrRowPtrC, csrRowPtrCt, *csrColIndCt, *csrValCt, _n, control);
+			}
+            else if (j == 37)
             {
                 int count_next = counter;
                 int num_threads, num_blocks, mergebuffer_size;
 
-                int num_threads_queue [5] = {64, 128, 256, 256, 256};
-                int mergebuffer_size_queue [5] = {256, 512, 1024, 2048, 2304}; //{256, 464, 924, 1888, 3840};
+				int num_threads_queue [5] = {64, 128, 256, 256, 256};
+				int mergebuffer_size_queue [5] = {256, 512, 1024, 2048, 2304}; //{256, 464, 924, 1888, 3840};
 
                 int queue_counter = 0;
 
@@ -680,17 +680,15 @@ int copy_Ct_to_C_opencl(int *counter_one, cl_mem csrValC, cl_mem csrRowPtrC, cl_
             }
             else if (j > 1 && j <= 32)
                 run_status = copy_Ct_to_C_Loopless(   32, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
-            else if (j > 32 && j <= 64)
+            else if (j == 33)
                 run_status = copy_Ct_to_C_Loopless(   64, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
-            else if (j > 63 && j <= 96)
-                run_status = copy_Ct_to_C_Loopless(   96, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
-            else if (j > 96 && j <= 122)
-                run_status = copy_Ct_to_C_Loopless(  128, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
-            else if (j == 123)
+            else if (j == 34)
+                run_status = copy_Ct_to_C_Loopless(   128, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
+            else if (j == 35)
                 run_status = copy_Ct_to_C_Loopless(  256, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
-            else if (j == 124)
+            else if (j == 36)
                 run_status = copy_Ct_to_C_Loop( 256, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
-            else if (j == 127)
+            else if (j == 37)
                 run_status = copy_Ct_to_C_Loop( 256, counter, j, counter_one[j], csrValC, csrRowPtrC, csrColIndC, csrValCt, csrRowPtrCt, csrColIndCt, queue_one, control);
 
             if (run_status != CL_SUCCESS)
@@ -876,34 +874,40 @@ int statistics(int *_h_csrRowPtrCt, int *_h_counter, int *_h_counter_one, int *_
     {
         count = _h_csrRowPtrCt[i];
 
-        if (count >= 0 && count <= 121)
+        if (count >= 0 && count <= 32)
         {
             _h_counter_one[count]++;
             _h_counter_sum[count] += count;
             _nnzCt_full += count;
         }
-        else if (count >= 122 && count <= 128)
+        else if (count >= 33 && count <= 64)
         {
-            _h_counter_one[122]++;
-            _h_counter_sum[122] += count;
+            _h_counter_one[33]++;
+            _h_counter_sum[33] += count;
+            _nnzCt_full += count;
+        }
+        else if (count >= 65 && count <= 128)
+        {
+            _h_counter_one[34]++;
+            _h_counter_sum[34] += count;
             _nnzCt_full += count;
         }
         else if (count >= 129 && count <= 256)
         {
-            _h_counter_one[123]++;
-            _h_counter_sum[123] += count;
+            _h_counter_one[35]++;
+            _h_counter_sum[35] += count;
             _nnzCt_full += count;
         }
-        else if (count >= 257 && count <= 512)
-        {
-            _h_counter_one[124]++;
-            _h_counter_sum[124] += count;
-            _nnzCt_full += count;
-        }
+		else if (count >= 257 && count <= 512)
+		{
+			_h_counter_one[36]++;
+			_h_counter_sum[36] += count;
+			_nnzCt_full += count;
+		}
         else if (count >= 513)
         {
-            _h_counter_one[127]++;
-            _h_counter_sum[127] += MERGELIST_INITSIZE;
+            _h_counter_one[37]++;
+            _h_counter_sum[37] += MERGELIST_INITSIZE;
             _nnzCt_full += count;
         }
     }
@@ -936,7 +940,7 @@ int statistics(int *_h_csrRowPtrCt, int *_h_counter, int *_h_counter_one, int *_
     {
         count = _h_csrRowPtrCt[i];
 
-        if (count >= 0 && count <= 121)
+        if (count >= 0 && count <= 32)
         {
             position = _h_counter_one[count] + _h_counter[count];
             _h_queue_one[TUPLE_QUEUE * position] = i;
@@ -944,37 +948,45 @@ int statistics(int *_h_csrRowPtrCt, int *_h_counter, int *_h_counter_one, int *_
             _h_counter_sum[count] += count;
             _h_counter[count]++;
         }
-        else if (count >= 122 && count <= 128)
+		else if (count >= 33 && count <= 64)
+		{
+			position = _h_counter_one[33] + _h_counter[33];
+			_h_queue_one[TUPLE_QUEUE * position] = i;
+			_h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[33];
+			_h_counter_sum[33] += count;
+			_h_counter[33]++;
+		}
+        else if (count >= 65 && count <= 128)
         {
-            position = _h_counter_one[122] + _h_counter[122];
+            position = _h_counter_one[34] + _h_counter[34];
             _h_queue_one[TUPLE_QUEUE * position] = i;
-            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[122];
-            _h_counter_sum[122] += count;
-            _h_counter[122]++;
+            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[34];
+            _h_counter_sum[34] += count;
+            _h_counter[34]++;
         }
         else if (count >= 129 && count <= 256)
         {
-            position = _h_counter_one[123] + _h_counter[123];
+            position = _h_counter_one[35] + _h_counter[35];
             _h_queue_one[TUPLE_QUEUE * position] = i;
-            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[123];
-            _h_counter_sum[123] += count;
-            _h_counter[123]++;
+            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[35];
+            _h_counter_sum[35] += count;
+            _h_counter[35]++;
         }
         else if (count >= 257 && count <= 512)
         {
-            position = _h_counter_one[124] + _h_counter[124];
+            position = _h_counter_one[36] + _h_counter[36];
             _h_queue_one[TUPLE_QUEUE * position] = i;
-            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[124];
-            _h_counter_sum[124] += count;
-            _h_counter[124]++;
+            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[36];
+            _h_counter_sum[36] += count;
+            _h_counter[36]++;
         }
         else if (count >= 513)
         {
-            position = _h_counter_one[127] + _h_counter[127];
+            position = _h_counter_one[37] + _h_counter[37];
             _h_queue_one[TUPLE_QUEUE * position] = i;
-            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[127];
-            _h_counter_sum[127] += MERGELIST_INITSIZE;
-            _h_counter[127]++;
+            _h_queue_one[TUPLE_QUEUE * position + 1] = _h_counter_sum[37];
+            _h_counter_sum[37] += MERGELIST_INITSIZE;
+            _h_counter[37]++;
         }
     }
 
