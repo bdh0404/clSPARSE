@@ -2,21 +2,6 @@
 #define MAX_HASH_SIZE 8192
 
 __kernel
-void compute_valC_0(
-        __global const int *d_csrRowCReorder,
-        __global int *d_csrRowPtrC,
-        const int bin)
-{
-    int global_id = get_global_id(0);
-
-    if(global_id >= bin) 
-		return;
-
-    int row_id = d_csrRowCReorder[global_id];
-    d_csrRowPtrC[row_id] = 0;
-}
-
-__kernel
 void compute_valC_1(
         __global const int *d_csrRowPtrA,
         __global const int *d_csrColIndA,
@@ -84,7 +69,6 @@ void compute_valC_pwarp(
 	int tid = global_id % nnzSize;
 	int hash_size = 2 * nnzSize;
 	int local_rid = (rid % nnzSize) * hashSize;
-	int num_rows = 64 / nnzsize;
 
 	rid = d_csrRowCReorder[ptr + rid];
 
@@ -99,7 +83,7 @@ void compute_valC_pwarp(
 	start_col_index_A = d_csrRowPtrA[rid];
 	stop_col_index_A = d_csrRowPtrA[rid + 1];
 
-	for (i = d_csrRowPtrA[rid] + tid; i < d_csrRowPtrA[rid + 1]; i += num_rows)
+	for (i = d_csrRowPtrA[rid] + tid; i < d_csrRowPtrA[rid + 1]; i += nnz_size)
 	{
 		int row_id_b = d_csrColIndA[i];
 		int aval = d_csrColValA[i];
@@ -109,7 +93,7 @@ void compute_valC_pwarp(
 
 		int j;
 
-		for (j = start_col_index_B + tid; j < stop_col_index_B; j += nnzSize)
+		for (j = start_col_index_B + tid; j < stop_col_index_B; j++)
 		{
 			int key = d_csrColIndB[j];
 			int bval = d_csrColValB[j];
@@ -290,7 +274,7 @@ void compute_valC_tb(
 		if (index != -1)
 		{
 			s_colhashtable[index] = ccol;
-			s_valhashtableindex] = cval;
+			s_valhashtable[index] = cval;
 		}
 	}
 
@@ -313,7 +297,7 @@ void compute_valC_tb(
 }
 
 __kernel
-void compute_nnzC_tb_global(
+void compute_valC_tb_global(
         __global const int *d_csrRowPtrA,
         __global const int *d_csrColIndA,
         __global const float *d_csrColValA,
@@ -335,6 +319,7 @@ void compute_nnzC_tb_global(
 	int tid = get_local_id(0);
 	int local_size = get_local_size(0);
 	int hash_size = 2 * nnzSize;
+	int doffset = rid * hashsize;
 
 	int i;
 
@@ -369,7 +354,7 @@ void compute_nnzC_tb_global(
 			int key = d_csrColIndB[j];
 			int bval = d_csrColValB[j];
 			int hash = (bcol * HASH_CONST) & (hash_size - 1);
-			int addr = hash;
+			int addr = doffset + hash;
 
 			while (true)
 			{
@@ -390,7 +375,7 @@ void compute_nnzC_tb_global(
 					else
 					{
 						hash = (hash + 1) % hash_size;
-						addr = local_rid + hash;
+						addr = doffset + hash;
 					}
 				}
 			}
@@ -403,11 +388,11 @@ void compute_nnzC_tb_global(
 	{
 		int index, ccol, cval;
 
-		if (s_colhashtable[i] != -1)
+		if (d_colhashtable[doffset + i] != -1)
 		{
 			index = atomic_add(d_Nz + rid, 1);
-			ccol = d_colhashtable[i];
-			cval = d_valhashtable[i];
+			ccol = d_colhashtable[doffset + i];
+			cval = d_valhashtable[doffset + i];
 		}
 		else
 			index = -1;
@@ -416,8 +401,8 @@ void compute_nnzC_tb_global(
 
 		if (index != -1)
 		{
-			d_colhashtable[index] = ccol;
-			d_valhashtableindex] = cval;
+			d_colhashtable[doffset + index] = ccol;
+			d_valhashtable[doffset + index] = cval;
 		}
 	}
 
@@ -428,14 +413,14 @@ void compute_nnzC_tb_global(
 
 	for (i = tid; i < nnz; i += local_size)
 	{
-		int target = s_colhashtable[i];
+		int target = d_colhashtable[doffset + i];
 		int count = 0;
 
 		for (j = 0; j < nnz; j++)
-			count += (unsigned int)(d_colhashtable[j] - target) >> 31;
+			count += (unsigned int)(d_colhashtable[doffset + j] - target) >> 31;
 
-		d_csrColIndC[offset + count] = d_colhashtable[i];
-		d_csrColValC[offset + count] = d_valhashtable[i];
+		d_csrColIndC[offset + count] = d_colhashtable[doffset + i];
+		d_csrColValC[offset + count] = d_valhashtable[doffset + i];
 	}
 }
 
