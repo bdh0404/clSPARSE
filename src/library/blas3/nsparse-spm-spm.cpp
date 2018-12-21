@@ -1,3 +1,7 @@
+/**
+ * @brief General Sparse Matrix-Matrix Multiplication Program
+ * 
+ */
 /* ************************************************************************
 * The MIT License (MIT)
 * Copyright 2014-2015 University of Copenhagen
@@ -34,72 +38,39 @@
 *  for details. >
 * ************************************************************************ */
 
-
 #include "include/clSPARSE-private.hpp"
 #include "internal/clsparse-control.hpp"
 #include "internal/kernel-cache.hpp"
 #include "internal/kernel-wrap.hpp"
 #include "internal/clsparse-internal.hpp"
+#include <stdio.h>
 
 #include <cmath>
 
+// maximum 256 threads per workgroup
 #define GROUPSIZE_256 256
-#define TUPLE_QUEUE 6
+// the number of bins of the inner-product numbers
 #define NIP_SEGMENTS 16
+// the number of bins of the non-zero numbers
 #define NNZ_SEGMENTS 15
 //#define WARPSIZE_NV_2HEAP 64
 #define value_type float
 #define index_type int
 #define NSPARSE_SUCCESS 0
+// maximum integer numbers that can be in local memory
 #define MAX_HASH_SIZE 8192
 
 using namespace std;
 
-int statistics(int *_h_csrRowPtrCt, int *_h_counter, int *_h_counter_one, int *_h_counter_sum, int *_h_queue_one, int _m);
-
-// compute interproduct numbers of each row, store the number in csrRowPtrIntSize, and the maximum number in clMaxIntProd
-clsparseStatus compute_nnzCIntProdNum(int _m, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB, 
-    cl_mem csrRowCIntProdNum, cl_mem clMaxIntProd, clsparseControl control){
-
-     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
-
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_compute_IntProdNum_kernel", "compute_IntProdNum_kernel", params);
-
-    size_t szLocalWorkSize[1];
-    size_t szGlobalWorkSize[1];
-
-    int num_threads = GROUPSIZE_256;
-    size_t num_blocks = ceil((double)_m / (double)num_threads);
-
-    szLocalWorkSize[0]  = num_threads;
-    szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
-
-    KernelWrap kWrapper(kernel);
-
-    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB << csrRowCIntProdNum << cl::Local(256 * sizeof(int)) << clMaxIntProd << _m;
-
-    cl::NDRange local(szLocalWorkSize[0]);
-    cl::NDRange global(szGlobalWorkSize[0]);
-
-    cl_int status = kWrapper.run(control, global, local);
-
-    if (status != CL_SUCCESS)
-    {
-        return clsparseInvalidKernelExecution;
-    }
-
-    return clsparseSuccess;
- }
-
-clsparseStatus compute_nipBin(int _m, cl_mem csrRowCIntProdNum, cl_mem intBin, clsparseControl control)
+// compute inner-product numbers of each row, store the number in csrRowPtrinnSize, and the maximum number in clMaxIntProd
+clsparseStatus compute_nnzCInnProdNum(int _m, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB,
+                                      cl_mem csrColIndB, cl_mem csrRowCInnProdNum, cl_mem clMaxIntProd, clsparseControl control)
 {
-     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNipBin_kernels", "compute_nipBin_kernel", params);
+    const std::string params = std::string() +
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_compute_InnProdNum_kernel", "compute_InnProdNum_kernel", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -107,12 +78,12 @@ clsparseStatus compute_nipBin(int _m, cl_mem csrRowCIntProdNum, cl_mem intBin, c
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)_m / (double)num_threads);
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
 
-    kWrapper << csrRowCIntProdNum << cl::Local(NIP_SEGMENTS * sizeof(int) ) << intBin << _m;
+    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB << csrRowCInnProdNum << cl::Local(256 * sizeof(int)) << clMaxIntProd << _m;
 
     cl::NDRange local(szLocalWorkSize[0]);
     cl::NDRange global(szGlobalWorkSize[0]);
@@ -127,13 +98,13 @@ clsparseStatus compute_nipBin(int _m, cl_mem csrRowCIntProdNum, cl_mem intBin, c
     return clsparseSuccess;
 }
 
-clsparseStatus compute_reorderRowNip(int _m, cl_mem csrRowCIntProdNum, cl_mem clIntPtr, cl_mem csrRowCReorder, clsparseControl control)
+// count the size of the number of inner-products bins
+clsparseStatus compute_nipBin(int _m, cl_mem csrRowCInnProdNum, cl_mem innBin, clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeReorderRowNip_kernels", "compute_ReorderRowNip_kernel", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNipBin_kernels", "compute_nipBin_kernel", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -141,12 +112,12 @@ clsparseStatus compute_reorderRowNip(int _m, cl_mem csrRowCIntProdNum, cl_mem cl
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)_m / (double)num_threads);
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
 
-    kWrapper << csrRowCIntProdNum << clIntPtr << csrRowCReorder << _m;
+    kWrapper << csrRowCInnProdNum << cl::Local(NIP_SEGMENTS * sizeof(int)) << innBin << _m;
 
     cl::NDRange local(szLocalWorkSize[0]);
     cl::NDRange global(szGlobalWorkSize[0]);
@@ -161,14 +132,48 @@ clsparseStatus compute_reorderRowNip(int _m, cl_mem csrRowCIntProdNum, cl_mem cl
     return clsparseSuccess;
 }
 
+// reorder the rows with bins and inner-product numbers
+clsparseStatus compute_reorderRowNip(int _m, cl_mem csrRowCInnProdNum, cl_mem clinnPtr, cl_mem csrRowCReorder,
+                                     clsparseControl control)
+{
+    const std::string params = std::string() +
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeReorderRowNip_kernels", "compute_ReorderRowNip_kernel", params);
+
+    size_t szLocalWorkSize[1];
+    size_t szGlobalWorkSize[1];
+
+    int num_threads = GROUPSIZE_256;
+    size_t num_blocks = ceil((double)_m / (double)num_threads);
+
+    szLocalWorkSize[0] = num_threads;
+    szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
+
+    KernelWrap kWrapper(kernel);
+
+    kWrapper << csrRowCInnProdNum << clinnPtr << csrRowCReorder << _m;
+
+    cl::NDRange local(szLocalWorkSize[0]);
+    cl::NDRange global(szGlobalWorkSize[0]);
+
+    cl_int status = kWrapper.run(control, global, local);
+
+    if (status != CL_SUCCESS)
+    {
+        return clsparseInvalidKernelExecution;
+    }
+
+    return clsparseSuccess;
+}
+
+// count the number of non-zero elements of rows with 0 inner-products
 clsparseStatus compute_nnzC_0(cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int bin, clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNnz_kernels", "compute_nnzC_0", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNnz_kernels", "compute_nnzC_0", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -176,7 +181,7 @@ clsparseStatus compute_nnzC_0(cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int 
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-    szLocalWorkSize[0]  = GROUPSIZE_256;
+    szLocalWorkSize[0] = GROUPSIZE_256;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
@@ -195,14 +200,14 @@ clsparseStatus compute_nnzC_0(cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int 
     return clsparseSuccess;
 }
 
-clsparseStatus compute_nnzC_1(cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int bin, int ptr, clsparseControl control)
+// count the number of non-zero elements of rows with 1 inner-products
+clsparseStatus compute_nnzC_1(cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int bin, int ptr,
+                              clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNnz_kernels", "compute_nnzC_1", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNnz_kernels", "compute_nnzC_1", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -210,7 +215,7 @@ clsparseStatus compute_nnzC_1(cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int 
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-    szLocalWorkSize[0]  = GROUPSIZE_256;
+    szLocalWorkSize[0] = GROUPSIZE_256;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
@@ -229,15 +234,14 @@ clsparseStatus compute_nnzC_1(cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int 
     return clsparseSuccess;
 }
 
-clsparseStatus compute_nnzC_pwarp(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB, 
-    cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int bin, int ptr, int intSize, clsparseControl control)
+// count the number of non-zero elements of rows with {2, 3~4, 5~8, 9~16, 17~32, 33~64} inner-products
+clsparseStatus compute_nnzC_pwarp(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB,
+                                  cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int bin, int ptr, int innSize, clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNnz_kernels", "compute_nnzC_pwarp", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNnz_kernels", "compute_nnzC_pwarp", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -245,11 +249,11 @@ clsparseStatus compute_nnzC_pwarp(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem c
     int num_threads = 64;
     size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-    szLocalWorkSize[0]  = 64;
+    szLocalWorkSize[0] = 64;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
-    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB <<  csrColIndB <<  csrRowCReorder <<  csrRowCNnzSize << cl::Local(64 * sizeof(int) ) << bin << ptr << intSize;
+    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB << csrColIndB << csrRowCReorder << csrRowCNnzSize << cl::Local(64 * sizeof(int)) << bin << ptr << innSize;
 
     cl::NDRange local(szLocalWorkSize[0]);
     cl::NDRange global(szGlobalWorkSize[0]);
@@ -264,27 +268,26 @@ clsparseStatus compute_nnzC_pwarp(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem c
     return clsparseSuccess;
 }
 
-clsparseStatus compute_nnzC_tb(int num_threads, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, 
-    cl_mem csrColIndB, cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int bin, 
-    int ptr, int intSize, clsparseControl control)
+// count the number of non-zero elements of rows with {65~128, 129~256, 257~512, 513~1024, 1025~2048, 2049~4096, 4097~8192} inner-products
+clsparseStatus compute_nnzC_tb(int num_threads, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB,
+                               cl_mem csrColIndB, cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, int bin, int ptr, int innSize,
+                               clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNnz_kernels", "compute_nnzC_tb", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNnz_kernels", "compute_nnzC_tb", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
 
     size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
-    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB <<  csrColIndB <<  csrRowCReorder <<  csrRowCNnzSize << cl::Local(intSize * sizeof(int) ) << bin << ptr << intSize;
+    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB << csrColIndB << csrRowCReorder << csrRowCNnzSize << cl::Local(innSize * sizeof(int)) << bin << ptr << innSize;
 
     cl::NDRange local(szLocalWorkSize[0]);
     cl::NDRange global(szGlobalWorkSize[0]);
@@ -299,16 +302,15 @@ clsparseStatus compute_nnzC_tb(int num_threads, cl_mem csrRowPtrA, cl_mem csrCol
     return clsparseSuccess;
 }
 
-clsparseStatus compute_nnzC_tb_large(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB, 
-    cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, cl_mem fail_count, cl_mem fail_perm, 
-    int bin, int ptr, clsparseControl control)
+// attempt to count the number of non-zero elements of rows with 8193~ inner-products
+clsparseStatus compute_nnzC_tb_large(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB,
+                                     cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, cl_mem fail_count, cl_mem fail_perm, int bin, int ptr,
+                                     clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNnz_kernels", "compute_nnzC_tb_large", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNnz_kernels", "compute_nnzC_tb_large", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -316,11 +318,11 @@ clsparseStatus compute_nnzC_tb_large(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_me
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
-    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB <<  csrColIndB <<  csrRowCReorder << csrRowCNnzSize << fail_count << fail_perm << cl::Local((MAX_HASH_SIZE - 1) * sizeof(int)) << cl::Local(sizeof(int)) << bin << ptr;
+    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB << csrColIndB << csrRowCReorder << csrRowCNnzSize << fail_count << fail_perm << cl::Local((MAX_HASH_SIZE - 1) * sizeof(int)) << cl::Local(sizeof(int)) << bin << ptr;
 
     cl::NDRange local(szLocalWorkSize[0]);
     cl::NDRange global(szGlobalWorkSize[0]);
@@ -335,15 +337,15 @@ clsparseStatus compute_nnzC_tb_large(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_me
     return clsparseSuccess;
 }
 
-clsparseStatus compute_nnzC_tb_global(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB, 
-    cl_mem fail_perm, cl_mem csrRowCNnzSize, cl_mem clhashtable, int fail_count, 
-    int max_intprod, cl_mem clMaxNnz, clsparseControl control)
+// count the number of non-zero elements of rows with 8193~ inner-products in global memory
+clsparseStatus compute_nnzC_tb_global(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB,
+                                      cl_mem fail_perm, cl_mem csrRowCNnzSize, cl_mem clhashtable, int fail_count, int max_intprod, cl_mem clMaxNnz,
+                                      clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNnz_kernels", "compute_nnzC_tb_large", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNnz_kernels", "compute_nnzC_tb_large", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -351,11 +353,11 @@ clsparseStatus compute_nnzC_tb_global(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_m
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)fail_count / (double)num_threads);
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
-    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB <<  csrColIndB << fail_perm << csrRowCNnzSize << clhashtable << fail_count << max_intprod;
+    kWrapper << csrRowPtrA << csrColIndA << csrRowPtrB << csrColIndB << fail_perm << csrRowCNnzSize << clhashtable << fail_count << max_intprod;
 
     cl::NDRange local(szLocalWorkSize[0]);
     cl::NDRange global(szGlobalWorkSize[0]);
@@ -370,93 +372,211 @@ clsparseStatus compute_nnzC_tb_global(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_m
     return clsparseSuccess;
 }
 
-
+// compute the number of non-zeros of each C's row based on inner-product number bins.
 clsparseStatus compute_nnzC(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrRowPtrB, cl_mem csrColIndB,
-	cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, std::vector<int> intBin, std::vector<int> intPtr,
-	int max_intprod, cl_mem clMaxNnz, clsparseControl control)
+                            cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, std::vector<int> innBin, std::vector<int> innPtr, int max_intprod, cl_mem clMaxNnz,
+                            clsparseControl control)
 {
-	if (intBin[0] > 0)
-		compute_nnzC_0(csrRowCReorder, csrRowCNnzSize, intBin[0], control);
-	if (intBin[1] > 0)
-		compute_nnzC_1(csrRowCReorder, csrRowCNnzSize, intBin[1], intPtr[1], control);
-	int i;
-	for (i = 2; i <= 7; i++)
-	{
-		if (intBin[i] > 0)
-			compute_nnzC_pwarp(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, 
-				csrRowCReorder, csrRowCNnzSize, intBin[i], intPtr[i], 
-				1 << (i - 1), control);
-	}
-	for (i = 8; i < 12; i++)
-	{
-		if (intBin[i] > 0)
-			compute_nnzC_tb(64, csrRowPtrA, csrColIndA, csrRowPtrB, 
-				csrColIndB, csrRowCReorder, csrRowCNnzSize, intBin[i], intPtr[i], control);
-	}
+    clsparseStatus run_status;
 
-	for (i = 12; i < NUM_SEGMENTS - 1; i++)
-	{
-		if (intBin[i] > 0)
-		{
-			int num_threads = 1 << (i - 6);
-			compute_nnzC_tb(num_threads, csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCReorder, csrRowCNnzSize, intBin[i], intPtr[i], control);
-		}
-	}
-	if (intBin[15] > 0)
-	{
-		int pattern = 0;
+    if (innBin[0] > 0)
+    {
+        // rows with 0 intermediate products
+        // 256 threads on each workgroup
+        run_status = compute_nnzC_0(csrRowCReorder, csrRowCNnzSize, innBin[0], control);
 
-		cl_mem clfail_count = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, sizeof(cl_int), NULL, &run_status);
+        if(run_status != clsparseSuccess)
+            return run_status;
+    }
+    if (innBin[1] > 0)
+    {
+        // rows with 1 intermediate product
+        // 256 threads on each workgroup
+        run_status = compute_nnzC_1(csrRowCReorder, csrRowCNnzSize, innBin[1], innPtr[1], control);
 
-		clEnqueueFillBuffer(control->queue(), clfail_count, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
+        if(run_status != clsparseSuccess)
+            return run_status;
+    }
+        
+    int i;
+    for (i = 2; i <= 7; i++)
+    {
+        if (innBin[i] > 0)
+        {
+            // rows with {2, 3~4, 5~8, 9~16, 17~32, 33~64} intermediate products
+            // 64 threads on each workgroup
+            run_status = compute_nnzC_pwarp(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB,
+                               csrRowCReorder, csrRowCNnzSize, innBin[i], innPtr[i],
+                               1 << (i - 1), control);
+            
+            if(run_status != clsparseSuccess)
+                return run_status;
+        }
+    }
+    for (i = 8; i < 12; i++)
+    {
+        if (innBin[i] > 0)
+        {
+            // rows with {65~128, 129~256, 257~512, 513~1024} intermediate products
+            // 64 threads on each workgroup
+            run_status = compute_nnzC_tb(64, csrRowPtrA, csrColIndA, csrRowPtrB,
+                            csrColIndB, csrRowCReorder, csrRowCNnzSize, innBin[i], innPtr[i], control);
+            
+            if(run_status != clsparseSuccess)
+                return run_status;
+        }
+    }
 
-		cl_mem clfail_perm = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, intBin[15] * sizeof(cl_int), NULL, &run_status);
+    for (i = 12; i < NUM_SEGMENTS - 1; i++)
+    {
+        if (innBin[i] > 0)
+        {
+            // rows with {1025~2048, 2049~4096, 4097~8192} intermediate products
+            // 64, 128, 256 threads on each workgroup
+            int num_threads = 1 << (i - 6);
 
-		clEnqueueFillBuffer(control->queue(), clfail_perm, &pattern, sizeof(cl_int), 0, intBin[15] * sizeof(cl_int), 0, NULL, NULL);
+            run_status = compute_nnzC_tb(num_threads, csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCReorder, csrRowCNnzSize, innBin[i], innPtr[i], control);
 
-		compute_nnzC_tb_large(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCReorder, csrRowPtrCNnzSize, clfail_count, clfail_perm, intBin[15], ptr, control);
+            if(run_status != clsparseSuccess)
+                return run_status;
+        }
+    }
+    if (innBin[15] > 0)
+    {
+        // rows with 8193~ intermediate products
+        // 256 threads on each workgroup
+        int pattern = 0;
+        // count  for fail to fit in local memory
+        cl_mem clfail_count = ::clCreateBuffer(cxt(), CL_MEM_HOST_READ_ONLY, sizeof(cl_int), NULL, &run_status);
 
-		int fail_count;
+        if(run_status != CL_SUCCESS)
+            return run_status;
+        // initialize to 0
+        run_status = clEnqueueFillBuffer(control->queue(), clfail_count, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
 
-		run_status = clEnqueueReadBuffer(control->queue(),
-			clfail_count,
-			1,
-			0,
-			sizeof(int),
-			&fail_count,
-			0,
-			0,
-			0);
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clfail_count);
 
-		if (fail_count > 0)
-		{
-			int minuspattern = -1;
-			cl_mem clhashtable = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, fail_max * fail_count * sizeof(cl_int), NULL, &run_status);
-			clEnqueueFillBuffer(control->queue(), clfail_perm, &minuspattern, sizeof(cl_int), 0, max_intprod * fail_count * sizeof(cl_int), 0, NULL, NULL);
-			compute_nnzC_global(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, clfail_perm, csrRowrCNnzSize, clhashtable, fail_count, clMaxNnz, control);
-			::clReleaseMemObject(clhashtable);
-		}
+            return run_status;
+        }
+        // buffer that collects rows that fails to fit in local memory
+        cl_mem clfail_perm = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, innBin[15] * sizeof(cl_int), NULL, &run_status);
 
-		::clReleaseMemObject(clfail_count);
-		::clReleaseMemObject(clfail_max);
-		::clReleaseMemObject(clfail_perm);
-	}
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clfail_count);
 
-	if (status != CL_SUCCESS)
-	{
-		return clsparseInvalidKernelExecution;
-	}
+            return run_status;
+        }
+        // try to count the number of nonzeros of those large rows
+        run_status = compute_nnzC_tb_large(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCReorder, csrRowPtrCNnzSize, clfail_count, clfail_perm, innBin[15], ptr, control);
 
-	return clsparseSuccess;
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clfail_perm);
+            ::clReleaseMemObject(clfail_count);
+
+            return run_status;
+        }
+        // read the number of rows that failed to count in local memory in CPU
+        int fail_count;
+
+        run_status = clEnqueueReadBuffer(control->queue(),
+                                         clfail_count,
+                                         1,
+                                         0,
+                                         sizeof(int),
+                                         &fail_count,
+                                         0,
+                                         0,
+                                         0);
+        
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clfail_perm);
+            ::clReleaseMemObject(clfail_count);
+
+            return run_status;
+        }
+        // If there is failed rows:
+        if (fail_count > 0)
+        {
+            // allocate hash table on global memory
+            int minuspattern = -1;
+            cl_mem clhashtable = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, max_intprod * fail_count * sizeof(cl_int), NULL, &run_status);
+
+            if(run_status != CL_SUCCESS)
+            {
+                ::clReleaseMemObject(clfail_perm);
+                ::clReleaseMemObject(clfail_count);
+
+                return run_status;
+            }
+            // initialize hash table as -1
+            run_status = clEnqueueFillBuffer(control->queue(), clfail_perm, &minuspattern, sizeof(cl_int), 0, max_intprod * fail_count * sizeof(cl_int), 0, NULL, NULL);
+
+            if(run_status != CL_SUCCESS)
+            {
+                ::clReleaseMemObject(clhashtable);
+                ::clReleaseMemObject(clfail_perm);
+                ::clReleaseMemObject(clfail_count);
+
+                return run_status;
+            }
+            // count the number of non-zeros on global memory
+            run_status = compute_nnzC_global(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, clfail_perm, csrRowrCNnzSize, clhashtable, fail_count, clMaxNnz, control);
+
+            if(run_status != CL_SUCCESS)
+            {
+                ::clReleaseMemObject(clhashtable);
+                ::clReleaseMemObject(clfail_perm);
+                ::clReleaseMemObject(clfail_count);
+
+                return run_status;
+            }
+            // free hash table
+            run_status = ::clReleaseMemObject(clhashtable);
+
+            if(run_status != CL_SUCCESS)
+            {
+                ::clReleaseMemObject(clfail_perm);
+                ::clReleaseMemObject(clfail_count);
+
+                return run_status;
+            }
+        }
+        // free failed row buffer
+        run_status = ::clReleaseMemObject(clfail_perm);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clfail_count);
+
+            return run_status;
+        }
+        // free failed row count
+        run_status = ::clReleaseMemObject(clfail_count);
+
+        if(run_status != CL_SUCCESS)
+            return run_status;
+    }
+
+    if (status != CL_SUCCESS)
+    {
+        return clsparseInvalidKernelExecution;
+    }
+
+    return clsparseSuccess;
 }
 
+// perform prefix-scan to C's row pointer array
 clsparseStatus compute_scan(int _m, cl_mem d_array, clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-    cl::Kernel scankernel = KernelCache::get(control->queue,"SpGEMM_scan_kernels", "scan_block", params);
+    cl::Kernel scankernel = KernelCache::get(control->queue, "SpGEMM_scan_kernels", "scan_block", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -464,13 +584,17 @@ clsparseStatus compute_scan(int _m, cl_mem d_array, clsparseControl control)
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)_m / (double)(2 * GROUP_SIZE));
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
+    // allocate sum buffer that stores the last value of each block
     int pattern = 0;
     cl_int run_status;
-    cl_mem d_sum = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, num_blocks * sizeof( cl_int ), NULL, &run_status );
+    cl_mem d_sum = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, num_blocks * sizeof(cl_int), NULL, &run_status);
 
+    if(run_status != CL_SUCCESS)
+        return run_status;
+    // perform prefix-scan in each block
     KernelWrap scankWrapper(scankernel);
     scankWrapper << d_array << cl::Local(2 * GROUPSIZE_256 * sizeof(int)) << d_sum << _m;
 
@@ -486,11 +610,13 @@ clsparseStatus compute_scan(int _m, cl_mem d_array, clsparseControl control)
         return clsparseInvalidKernelExecution;
     }
 
-    if(_m > 1)
+    // if there are multiple sums
+    if (_m > 1)
     {
+        // scam the sum block
         clsparseStatus sparsestatus = compute_scan(num_blocks, d_sum, control);
 
-        if(sparsestatus != clsparseSuccess)
+        if (sparsestatus != clsparseSuccess)
         {
             ::clReleaseMemObject(d_sum);
 
@@ -498,8 +624,8 @@ clsparseStatus compute_scan(int _m, cl_mem d_array, clsparseControl control)
         }
     }
 
-    cl::Kernel addkernel = KernelCache::get(control->queue,"SpGEMM_scan_kernels", "add_block", params);
-
+    cl::Kernel addkernel = KernelCache::get(control->queue, "SpGEMM_scan_kernels", "add_block", params);
+    // add the scanned sums into each block
     KernelWrap addkWrapper(addkernel);
     addkWrapper << d_array << d_sum << _m;
 
@@ -511,19 +637,26 @@ clsparseStatus compute_scan(int _m, cl_mem d_array, clsparseControl control)
 
         return clsparseInvalidKernelExecution;
     }
+    // release the sum buffer
+    run_status = ::clReleaseMemObject(d_sum);
 
-    ::clReleaseMemObject(d_sum);
+    if (run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(d_sum);
+
+        return clsparseInvalidKernelExecution;
+    }
 
     return clsparseSuccess;
 }
 
+// count the size of the number of non-zeros bins
 clsparseStatus compute_nnzBin(int _m, cl_mem csrRowCNnzSize, cl_mem nnzBin, clsparseControl control)
 {
-     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+    const std::string params = std::string() +
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeNipBin_kernels", "compute_nipBin_kernel", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeNipBin_kernels", "compute_nipBin_kernel", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -531,12 +664,12 @@ clsparseStatus compute_nnzBin(int _m, cl_mem csrRowCNnzSize, cl_mem nnzBin, clsp
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)_m / (double)num_threads);
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
 
-    kWrapper << csrRowCNnzSize << cl::Local(NNZ_SEGMENTS * sizeof(int) ) << nnzBin << _m;
+    kWrapper << csrRowCNnzSize << cl::Local(NNZ_SEGMENTS * sizeof(int)) << nnzBin << _m;
 
     cl::NDRange local(szLocalWorkSize[0]);
     cl::NDRange global(szGlobalWorkSize[0]);
@@ -551,13 +684,14 @@ clsparseStatus compute_nnzBin(int _m, cl_mem csrRowCNnzSize, cl_mem nnzBin, clsp
     return clsparseSuccess;
 }
 
-clsparseStatus compute_reorderRowNnz(int _m, cl_mem csrRowCNnzSize, cl_mem clNnzPtr, cl_mem csrRowCReorder, clsparseControl control)
+// reorder the rows with bins and the number of non-zeros
+clsparseStatus compute_reorderRowNnz(int _m, cl_mem csrRowCNnzSize, cl_mem clNnzPtr, cl_mem csrRowCReorder,
+                                     clsparseControl control)
 {
     const std::string params = std::string() +
-               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-            + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
-    cl::Kernel kernel = KernelCache::get(control->queue,"SpGEMM_computeReorderRowNip_kernels", "compute_ReorderRowNip_kernel", params);
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeReorderRowNip_kernels", "compute_ReorderRowNip_kernel", params);
 
     size_t szLocalWorkSize[1];
     size_t szGlobalWorkSize[1];
@@ -565,7 +699,7 @@ clsparseStatus compute_reorderRowNnz(int _m, cl_mem csrRowCNnzSize, cl_mem clNnz
     int num_threads = GROUPSIZE_256;
     size_t num_blocks = ceil((double)_m / (double)num_threads);
 
-    szLocalWorkSize[0]  = num_threads;
+    szLocalWorkSize[0] = num_threads;
     szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
     KernelWrap kWrapper(kernel);
@@ -585,271 +719,409 @@ clsparseStatus compute_reorderRowNnz(int _m, cl_mem csrRowCNnzSize, cl_mem clNnz
     return clsparseSuccess;
 }
 
+/**
+ * @brief 
+ * 
+ * @param csrRowPtrA 
+ * @param csrColIndA 
+ * @param csrColValA 
+ * @param csrRowPtrB 
+ * @param csrColIndB 
+ * @param csrColValB 
+ * @param csrRowPtrC 
+ * @param csrColIndC 
+ * @param csrColValC 
+ * @param csrRowCReorder 
+ * @param bin 
+ * @param ptr 
+ * @return clsparseStatus 
+ */
 clsparseStatus compute_valC_1(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA, cl_mem csrRowPtrB,
-	cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC,
-	cl_mem csrRowCReorder, int bin, int ptr, control)
+                              cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC, cl_mem csrRowCReorder,
+                              int bin, int ptr, control)
 {
-	const std::string params = std::string() +
-		"-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-		+ " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+    const std::string params = std::string() +
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_1", params);
 
-	cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_1", params);
+    size_t szLocalWorkSize[1];
+    size_t szGlobalWorkSize[1];
 
-	size_t szLocalWorkSize[1];
-	size_t szGlobalWorkSize[1];
+    int num_threads = GROUPSIZE_256;
+    size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-	int num_threads = GROUPSIZE_256;
-	size_t num_blocks = ceil((double)bin / (double)num_threads);
+    szLocalWorkSize[0] = GROUPSIZE_256;
+    szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
-	szLocalWorkSize[0] = GROUPSIZE_256;
-	szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
+    KernelWrap kWrapper(kernel);
+    kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
+             << csrColIndB << csrColValB << csrRowPtrC << csrColIndC
+             << csrColValC << csrRowCReorder << bin << ptr;
 
-	KernelWrap kWrapper(kernel);
-	kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
-		<< csrColIndB << csrColValB << csrRowPtrC << csrColIndC 
-		<< csrColValC << csrRowCReorder << bin << ptr;
+    cl::NDRange local(szLocalWorkSize[0]);
+    cl::NDRange global(szGlobalWorkSize[0]);
 
-	cl::NDRange local(szLocalWorkSize[0]);
-	cl::NDRange global(szGlobalWorkSize[0]);
+    cl_int status = kWrapper.run(control, global, local);
 
-	cl_int status = kWrapper.run(control, global, local);
+    if (status != CL_SUCCESS)
+    {
+        return clsparseInvalidKernelExecution;
+    }
 
-	if (status != CL_SUCCESS)
-	{
-		return clsparseInvalidKernelExecution;
-	}
-
-	return clsparseSuccess;
+    return clsparseSuccess;
 }
 
+// compute the value of rows with {2, 3~4, 5~8, 9~16, 17~32, 33~64} non-zero elements
 clsparseStatus compute_valC_pwarp(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA, cl_mem csrRowPtrB,
-	cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC,
-	cl_mem csrRowCReorder, int bin, int ptr, int nnzSize, control)
+                                  cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC, cl_mem csrRowCReorder,
+                                  int bin, int ptr, int nnzSize, control)
 {
-	const std::string params = std::string() +
-		"-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-		+ " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+    const std::string params = std::string() +
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_pwarp", params);
 
-	cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_pwarp", params);
+    size_t szLocalWorkSize[1];
+    size_t szGlobalWorkSize[1];
 
-	size_t szLocalWorkSize[1];
-	size_t szGlobalWorkSize[1];
+    int num_threads = 64;
+    size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-	int num_threads = 64;
-	size_t num_blocks = ceil((double)bin / (double)num_threads);
+    szLocalWorkSize[0] = 64;
+    szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
-	szLocalWorkSize[0] = 64;
-	szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
+    KernelWrap kWrapper(kernel);
+    kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
+             << csrColIndB << csrColValB << csrRowPtrC << csrColIndC
+             << csrColValC << csrRowCReorder << bin << ptr
+             << nnzSize;
 
-	KernelWrap kWrapper(kernel);
-	kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
-		<< csrColIndB << csrColValB << csrRowPtrC << csrColIndC
-		<< csrColValC << csrRowCReorder << bin << ptr
-		<< nnzSize;
+    cl::NDRange local(szLocalWorkSize[0]);
+    cl::NDRange global(szGlobalWorkSize[0]);
 
-	cl::NDRange local(szLocalWorkSize[0]);
-	cl::NDRange global(szGlobalWorkSize[0]);
+    cl_int status = kWrapper.run(control, global, local);
 
-	cl_int status = kWrapper.run(control, global, local);
+    if (status != CL_SUCCESS)
+    {
+        return clsparseInvalidKernelExecution;
+    }
 
-	if (status != CL_SUCCESS)
-	{
-		return clsparseInvalidKernelExecution;
-	}
-
-	return clsparseSuccess;
+    return clsparseSuccess;
 }
 
-clsparseStatus compute_valC_tb(int num_threads, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA, cl_mem csrRowPtrB,
-	cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC,
-	cl_mem csrRowCReorder, int bin, int ptr, int nnzSize, control)
+// compute the value of rows with {65~128, 129~256, 257~512, 513~1024, 1025~2048} non-zero elements
+clsparseStatus compute_valC_tb(int num_threads, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA,
+                               cl_mem csrRowPtrB, cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC,
+                               cl_mem csrRowCReorder, int bin, int ptr, int nnzSize, control)
 {
-	const std::string params = std::string() +
-		"-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-		+ " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+    const std::string params = std::string() +
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_tb", params);
 
-	cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_tb", params);
+    size_t szLocalWorkSize[1];
+    size_t szGlobalWorkSize[1];
 
-	size_t szLocalWorkSize[1];
-	size_t szGlobalWorkSize[1];
+    size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-	size_t num_blocks = ceil((double)bin / (double)num_threads);
+    szLocalWorkSize[0] = num_threads;
+    szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
-	szLocalWorkSize[0] = num_threads;
-	szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
+    KernelWrap kWrapper(kernel);
+    kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
+             << csrColIndB << csrColValB << csrRowPtrC << csrColIndC
+             << csrColValC << csrRowCReorder << bin << ptr
+             << nnzSize;
 
-	KernelWrap kWrapper(kernel);
-	kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
-		<< csrColIndB << csrColValB << csrRowPtrC << csrColIndC
-		<< csrColValC << csrRowCReorder << bin << ptr
-		<< nnzSize;
+    cl::NDRange local(szLocalWorkSize[0]);
+    cl::NDRange global(szGlobalWorkSize[0]);
 
-	cl::NDRange local(szLocalWorkSize[0]);
-	cl::NDRange global(szGlobalWorkSize[0]);
+    cl_int status = kWrapper.run(control, global, local);
 
-	cl_int status = kWrapper.run(control, global, local);
+    if (status != CL_SUCCESS)
+    {
+        return clsparseInvalidKernelExecution;
+    }
 
-	if (status != CL_SUCCESS)
-	{
-		return clsparseInvalidKernelExecution;
-	}
-
-	return clsparseSuccess;
+    return clsparseSuccess;
 }
 
-clsparseStatus compute_valC_tb_global(int num_threads, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA, cl_mem csrRowPtrB,
-	cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC,
-	cl_mem csrRowCReorder, cl_mem clcolhashtable, cl_mem clvalhashtable, int bin, 
-	int ptr, int nnzSize, control)
+// compute the value of rows with {2049~4096, 4096~} non-zero elements
+clsparseStatus compute_valC_tb_global(int num_threads, cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA,
+                                      cl_mem csrRowPtrB, cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC,
+                                      cl_mem csrRowCReorder, cl_mem clcolhashtable, cl_mem clvalhashtable, int bin, int ptr, int nnzSize,
+                                      control)
 {
-	const std::string params = std::string() +
-		"-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type
-		+ " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
+    const std::string params = std::string() +
+                               "-DINDEX_TYPE=" + OclTypeTraits<cl_int>::type + " -DVALUE_TYPE=" + OclTypeTraits<cl_float>::type;
 
+    cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_tb_global", params);
 
-	cl::Kernel kernel = KernelCache::get(control->queue, "SpGEMM_computeVal_kernels", "compute_valC_tb_global", params);
+    size_t szLocalWorkSize[1];
+    size_t szGlobalWorkSize[1];
 
-	size_t szLocalWorkSize[1];
-	size_t szGlobalWorkSize[1];
+    size_t num_blocks = ceil((double)bin / (double)num_threads);
 
-	size_t num_blocks = ceil((double)bin / (double)num_threads);
+    szLocalWorkSize[0] = num_threads;
+    szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
 
-	szLocalWorkSize[0] = num_threads;
-	szGlobalWorkSize[0] = num_blocks * szLocalWorkSize[0];
+    KernelWrap kWrapper(kernel);
+    kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
+             << csrColIndB << csrColValB << csrRowPtrC << csrColIndC
+             << csrColValC << csrRowCReorder << clcolhashtable << clvalhashtable
+             << bin << ptr << nnzSize;
 
-	KernelWrap kWrapper(kernel);
-	kWrapper << csrRowPtrA << csrColIndA << csrColValA << csrRowPtrB
-		<< csrColIndB << csrColValB << csrRowPtrC << csrColIndC
-		<< csrColValC << csrRowCReorder << clcolhashtable << clvalhashtable 
-		<< bin << ptr << nnzSize;
+    cl::NDRange local(szLocalWorkSize[0]);
+    cl::NDRange global(szGlobalWorkSize[0]);
 
-	cl::NDRange local(szLocalWorkSize[0]);
-	cl::NDRange global(szGlobalWorkSize[0]);
+    cl_int status = kWrapper.run(control, global, local);
 
-	cl_int status = kWrapper.run(control, global, local);
+    if (status != CL_SUCCESS)
+    {
+        return clsparseInvalidKernelExecution;
+    }
 
-	if (status != CL_SUCCESS)
-	{
-		return clsparseInvalidKernelExecution;
-	}
-
-	return clsparseSuccess;
+    return clsparseSuccess;
 }
 
-clsparseStatus compute_valC(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA, cl_mem csrRowPtrB, 
-	cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, 
-	cl_mem csrColValC, cl_mem csrRowCReorder, cl_mem csrRowCNnzSize, std::vector<int> nnzBin, 
-	std::vector<int> nnzPtr, , int max_nnz, clsparseControl control)
+// compute the value of rows with non-zero elements
+clsparseStatus compute_valC(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColValA, cl_mem csrRowPtrB,
+                            cl_mem csrColIndB, cl_mem csrColValB, cl_mem csrRowPtrC, cl_mem csrColIndC, cl_mem csrColValC, cl_mem csrRowCReorder,
+                            cl_mem csrRowCNnzSize, std::vector<int> nnzBin, std::vector<int> nnzPtr, int max_nnz, clsparseControl control)
 {
-	if (intBin[1] > 0)
-		compute_valC_1(csrRowPtrA, csrColIndA, csrColValA, csrRowPtrB, 
-			csrColIndB, csrColValB, csrRowPtrC, csrColIndC, 
-			csrColValC, csrRowCReorder, nnzBin[1], nnzPtr[1], 
-			control);
-	int i;
-	for (i = 2; i <= 7; i++)
-	{
-		if (nnzBin[i] > 0)
-			compute_valC_pwarp(csrRowPtrA, csrColIndA, csrColValA, csrRowPtrB, 
-				csrColIndB, csrColValB, csrRowPtrC, csrColIndC, 
-				csrColValC, csrRowCReorder, csrRowCNnzSize, nnzBin[i], 
-				nnzPtr[i], 1 << (i - 1), control);
-	}
-	for (i = 8; i < 10; i++)
-	{
-		if (nnzBin[i] > 0)
-			compute_valC_tb(64, csrRowPtrA, csrColIndA, csrColValA, 
-				csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC, 
-				csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize, 
-				nnzBin[i], nnzPtr[i], 1 << (i - 1), control);
-	}
+    clsparseStatus run_status;
+    if (nnzBin[1] > 0)
+    {
+        // compute values with 1 non-zero element
+        run_status = compute_valC_1(csrRowPtrA, csrColIndA, csrColValA, csrRowPtrB,
+                       csrColIndB, csrColValB, csrRowPtrC, csrColIndC,
+                       csrColValC, csrRowCReorder, nnzBin[1], nnzPtr[1],
+                       control);
 
-	for (i = 10; i < 12; i++)
-	{
-		if (nnzBin[i] > 0)
-		{
-			int num_threads = 1 << (i - 6);
-			compute_valC_tb(num_threads, csrRowPtrA, csrColIndA, csrColValA, 
-				csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC, 
-				csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize, 
-				nnzBin[i], nnzPtr[i], 1 << (i - 1), control);
-		}
-	}
-	if (nnzBin[13] > 0)
-	{
-		int pattern = 0;
-		int minuspattern = -1;
-		cl_mem clcolhashtable = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, 8192 * sizeof(cl_int), NULL, &run_status);
-		cl_mem clvalhashtable = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, 8192 * sizeof(cl_int), NULL, &run_status);
-		clEnqueueFillBuffer(control->queue(), clcolhashtable, &minuspattern, sizeof(cl_int), 0, nnzBin[13] * sizeof(cl_int), 0, NULL, NULL);
-		clEnqueueFillBuffer(control->queue(), clvalhashtable, &pattern, sizeof(cl_int), 0, nnzBin[13] * sizeof(cl_int), 0, NULL, NULL);
-		compute_valC_global(num_threads, csrRowPtrA, csrColIndA, csrColValA,
-			csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC,
-			csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize,
-			clcolhashtable, clvalhashtable, nnzBin[i], nnzPtr[i], 
-			1 << (i - 1), control);
-		::clReleaseMemObject(clcolhashtable);
-		::clReleaseMemObject(clvalhashtable);
-	}
-	if (intBin[14] > 0)
-	{
-		int pattern = 0;
-		int minuspattern = -1;
-		cl_mem clcolhashtable = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, 8192 * sizeof(cl_int), NULL, &run_status);
-		cl_mem clvalhashtable = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, 8192 * sizeof(cl_int), NULL, &run_status);
-		clEnqueueFillBuffer(control->queue(), clcolhashtable, &minuspattern, sizeof(cl_int), 0, 2 * max_nnz * sizeof(cl_int), 0, NULL, NULL);
-		clEnqueueFillBuffer(control->queue(), clvalhashtable, &pattern, sizeof(cl_int), 0, 2 * max_nnz * sizeof(cl_int), 0, NULL, NULL);
-		compute_valC_global(num_threads, csrRowPtrA, csrColIndA, csrColValA,
-			csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC,
-			csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize,
-			clcolhashtable, clvalhashtable, nnzBin[i], nnzPtr[i],
-			max_nnz, control);
-		::clReleaseMemObject(clcolhashtable);
-		::clReleaseMemObject(clvalhashtable);
-	}
+        if(run_status != clsparseSuccess)
+            return run_status;
+    }
 
-	if (status != CL_SUCCESS)
-	{
-		return clsparseInvalidKernelExecution;
-	}
+    int i;
 
-	return clsparseSuccess;
+    for (i = 2; i <= 7; i++)
+    {
+        if (nnzBin[i] > 0)
+        {
+            // compute values with {2, 3~4, 5~8, 9~16, 17~32, 33~64} non-zero elements
+            run_status = compute_valC_pwarp(csrRowPtrA, csrColIndA, csrColValA, csrRowPtrB,
+                               csrColIndB, csrColValB, csrRowPtrC, csrColIndC,
+                               csrColValC, csrRowCReorder, csrRowCNnzSize, nnzBin[i],
+                               nnzPtr[i], 1 << (i - 1), control);
+            if(run_status != clsparseSuccess)
+                return run_status;
+        }
+    }
+    for (i = 8; i < 10; i++)
+    {
+        if (nnzBin[i] > 0)
+        {
+            // compute values with {65~128, 129~256} non-zero elements
+            run_status = compute_valC_tb(64, csrRowPtrA, csrColIndA, csrColValA,
+                            csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC,
+                            csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize,
+                            nnzBin[i], nnzPtr[i], 1 << (i - 1), control);
+            if(run_status != clsparseSuccess)
+                return run_status;
+        }
+    }
+
+    for (i = 10; i < 12; i++)
+    {
+        if (nnzBin[i] > 0)
+        {
+            // compute values with {257~512, 513~1024, 1025~2048} non-zero elements
+            int num_threads = 1 << (i - 6);
+
+            run_status = compute_valC_tb(num_threads, csrRowPtrA, csrColIndA, csrColValA,
+                            csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC,
+                            csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize,
+                            nnzBin[i], nnzPtr[i], 1 << (i - 1), control);
+
+            if(run_status != clsparseSuccess)
+                return run_status;
+        }
+    }
+    if (nnzBin[13] > 0)
+    {
+        // compute values with 2049~4096 non-zero elements
+        int pattern = 0;
+        int minuspattern = -1;
+        // allocate column hash table with size 8192 * sizeof(cl_int)
+        cl_mem clcolhashtable = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, 8192 * sizeof(cl_int), NULL, &run_status);
+
+        if(run_status != CL_SUCCESS)
+            return run_status;
+        // initialize column hash table as -1
+        run_status = clEnqueueFillBuffer(control->queue(), clcolhashtable, &minuspattern, sizeof(cl_int), 0, nnzBin[13] * sizeof(cl_int), 0, NULL, NULL);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clcolhashtable);
+
+            return run_status;
+        }
+        // allocate value hash table with size 8192 * sizeof(cl_int)
+        cl_mem clvalhashtable = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, 8192 * sizeof(cl_int), NULL, &run_status);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clcolhashtable);
+            
+            return run_status;
+        }
+        // initialize value hash table as 0
+        run_status = clEnqueueFillBuffer(control->queue(), clvalhashtable, &pattern, sizeof(cl_int), 0, nnzBin[13] * sizeof(cl_int), 0, NULL, NULL);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clvalhashtable);
+            ::clReleaseMemObject(clcolhashtable);
+            
+            return run_status;
+        }
+        // compute values on global hash table
+        run_status = compute_valC_global(num_threads, csrRowPtrA, csrColIndA, csrColValA,
+                            csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC,
+                            csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize,
+                            clcolhashtable, clvalhashtable, nnzBin[i], nnzPtr[i],
+                            1 << (i - 1), control);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clvalhashtable);
+            ::clReleaseMemObject(clcolhashtable);
+            
+            return run_status;
+        }
+        // free value hash table
+        run_status = ::clReleaseMemObject(clvalhashtable);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clcolhashtable);
+            
+            return run_status;
+        }
+        // free column hash table
+        run_status = ::clReleaseMemObject(clcolhashtable);
+
+        if(run_status != CL_SUCCESS)
+            return run_status;
+    }
+    if (innBin[14] > 0)
+    {
+        // compute values with 4097~ non-zero elements
+        int pattern = 0, minuspattern = -1;
+        // allocate column hash table with size 8192 * sizeof(cl_int)
+        cl_mem clcolhashtable = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, 8192 * sizeof(cl_int), NULL, &run_status);
+
+        if(run_status != CL_SUCCESS)
+            return run_status;
+        // initialize column hash table as -1
+        run_status = clEnqueueFillBuffer(control->queue(), clcolhashtable, &minuspattern, sizeof(cl_int), 0, 2 * max_nnz * sizeof(cl_int), 0, NULL, NULL);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clcolhashtable);
+
+            return run_status;
+        }
+        // allocate value hash table with size 8192 * sizeof(cl_int)
+        cl_mem clvalhashtable = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, 8192 * sizeof(cl_int), NULL, &run_status);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clcolhashtable);
+
+            return run_status;
+        }
+        // initialize value hash table as 0
+        run_status = clEnqueueFillBuffer(control->queue(), clvalhashtable, &pattern, sizeof(cl_int), 0, 2 * max_nnz * sizeof(cl_int), 0, NULL, NULL);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clvalhashtable);
+            ::clReleaseMemObject(clcolhashtable);
+
+            return run_status;
+        }
+        // compute values on global hash table
+        run_status = compute_valC_global(num_threads, csrRowPtrA, csrColIndA, csrColValA,
+                            csrRowPtrB, csrColIndB, csrColValB, csrRowPtrC,
+                            csrColIndC, csrColValC, csrRowCReorder, csrRowCNnzSize,
+                            clcolhashtable, clvalhashtable, nnzBin[i], nnzPtr[i],
+                            max_nnz, control);
+        
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clvalhashtable);
+            ::clReleaseMemObject(clcolhashtable);
+
+            return run_status;
+        }
+        // free value hash table
+        run_status = ::clReleaseMemObject(clvalhashtable);
+
+        if(run_status != CL_SUCCESS)
+        {
+            ::clReleaseMemObject(clcolhashtable);
+
+            return run_status;
+        }
+        // free column hash table
+        run_status = ::clReleaseMemObject(clcolhashtable);
+
+        if(run_status != CL_SUCCESS)
+            return run_status;
+    }
+
+    if (status != CL_SUCCESS)
+    {
+        return clsparseInvalidKernelExecution;
+    }
+
+    return clsparseSuccess;
 }
 
- CLSPARSE_EXPORT clsparseStatus
-        clsparseScsrSpGemm(
-        const clsparseCsrMatrix* sparseMatA,
-        const clsparseCsrMatrix* sparseMatB,
-              clsparseCsrMatrix* sparseMatC,
-        const clsparseControl control )
+// C = A * B, A, B, C are CSR Matrix
+CLSPARSE_EXPORT clsparseStatus
+clsparseScsrSpGemm(
+    const clsparseCsrMatrix *sparseMatA,
+    const clsparseCsrMatrix *sparseMatB,
+    clsparseCsrMatrix *sparseMatC,
+    const clsparseControl control)
 {
     cl_int run_status;
 
     if (!clsparseInitialized)
     {
-       return clsparseNotInitialized;
+        return clsparseNotInitialized;
     }
 
     if (control == nullptr)
     {
-       return clsparseInvalidControlObject;
+        return clsparseInvalidControlObject;
     }
 
-    const clsparseCsrMatrixPrivate* matA = static_cast<const clsparseCsrMatrixPrivate*>(sparseMatA);
-    const clsparseCsrMatrixPrivate* matB = static_cast<const clsparseCsrMatrixPrivate*>(sparseMatB);
-    clsparseCsrMatrixPrivate* matC = static_cast<clsparseCsrMatrixPrivate*>(sparseMatC);
+    const clsparseCsrMatrixPrivate *matA = static_cast<const clsparseCsrMatrixPrivate *>(sparseMatA);
+    const clsparseCsrMatrixPrivate *matB = static_cast<const clsparseCsrMatrixPrivate *>(sparseMatB);
+    clsparseCsrMatrixPrivate *matC = static_cast<clsparseCsrMatrixPrivate *>(sparseMatC);
 
     size_t m = matA->num_rows;
     size_t k1 = matA->num_cols;
     size_t k2 = matB->num_rows;
-    size_t n  = matB->num_cols;
+    size_t n = matB->num_cols;
     size_t nnzA = matA->num_nonzeros;
     size_t nnzB = matB->num_nonzeros;
 
-    if(k1 != k2)
+    if (k1 != k2)
     {
         std::cerr << "A.n and B.m don't match!" << std::endl;
         return clsparseInvalidKernelExecution;
@@ -857,27 +1129,62 @@ clsparseStatus compute_valC(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColV
 
     cl_mem csrRowPtrA = matA->row_pointer;
     cl_mem csrColIndA = matA->col_indices;
-    cl_mem csrValA    = matA->values;
+    cl_mem csrColValA = matA->values;
     cl_mem csrRowPtrB = matB->row_pointer;
     cl_mem csrColIndB = matB->col_indices;
-    cl_mem csrValB    = matB->values;
+    cl_mem csrColValB = matB->values;
 
     cl::Context cxt = control->getContext();
 
     // STAGE 1 Count the number of intermediate products of each row
     int pattern = 0;
 
-    // interproduct numbers of each C's row
-    cl_mem csrRowCIntProdNum = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, m * sizeof( cl_int ), NULL, &run_status );
-    clEnqueueFillBuffer(control->queue(), csrRowPtrCIntSize, &pattern, sizeof(cl_int), 0, m * sizeof(cl_int), 0, NULL, NULL);
-    // max interproduct number of all rows
-    cl_mem clMaxIntProd = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, sizeof( cl_int ), NULL, &run_status );
-    clEnqueueFillBuffer(control->queue(), clMaxIntProd, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
+    // inner-product numbers of each C's row, m integers.
+    cl_mem csrRowCInnProdNum = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, m * sizeof(cl_int), NULL, &run_status);
 
-    compute_nnzCIntProdNum(m, csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCIntProdNum, clMaxIntProd, control);
+    if(run_status != CL_SUCCESS)
+        return run_status;
+    // Fill csrRowInnProdNum as 0
+    run_status = clEnqueueFillBuffer(control->queue(), csrRowPtrCInnProdNum, &pattern, sizeof(cl_int), 0, m * sizeof(cl_int), 0, NULL, NULL);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
+    // maximum inner-product number of all rows
+    cl_mem clMaxIntProd = ::clCreateBuffer(cxt(), CL_MEM_HOST_READ_ONLY, sizeof(cl_int), NULL, &run_status);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
+    // initialize to 0
+    run_status = clEnqueueFillBuffer(control->queue(), clMaxIntProd, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clMaxIntProd);
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
+    // calculate the numbers of inner-product
+    run_status = compute_nnzCInnProdNum(m, csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCInnProdNum, clMaxIntProd, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clMaxIntProd);
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
 
     int max_intprod;
-
+    // retrieve the maximum inner-product number to CPU.
     run_status = clEnqueueReadBuffer(control->queue(),
                                      clMaxIntProd,
                                      1,
@@ -888,159 +1195,482 @@ clsparseStatus compute_valC(cl_mem csrRowPtrA, cl_mem csrColIndA, cl_mem csrColV
                                      0,
                                      0);
     
-    ::clReleaseMemObject(clMaxIntProd);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clMaxIntProd);
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
+    // clMaxIntProd will not be used again: free!
+    run_status = ::clReleaseMemObject(clMaxIntProd);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
 
     // STAGE 2 Divide the rows into groups by the number of intermediate products
-    // bins of rows with interproduct numbers
+    // bins of rows with inner-product numbers
     // local memory size: 32KB.
-    // FP16: index 4byte + value 2byte => Max 8192 indexes or 5461 index and value pair
-    // FP32: index 4byte + value 4byte => Max 8192 indexes or 4096 index and value pair
-    // FP64: index 4byte + value 8byte => Max 8192 indexes or 2730 index and value pair
-    // bin: {0, 1, 2, 3~4, 5~8, 9~16, 17~32, 33~64, 65~128, 129~256, 257~512, 513~1024, 1025~2048, 2049~4096, 4097~8192, 8192~}
-    cl_mem clIntBin = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, NIP_SEGMENTS * sizeof(cl_int), NULL, &run_status );
-    clEnqueueFillBuffer(control->queue(), clIntBin, &pattern, sizeof(cl_int), 0, NIP_SEGMENTS * sizeof(cl_int), 0, NULL, NULL);
+    // 16 members of bin: {0, 1, 2, 3~4, 5~8, 9~16, 17~32, 33~64, 65~128, 129~256, 257~512, 513~1024, 1025~2048, 2049~4096, 4097~8192, 8192~}
+    cl_mem clinnBin = ::clCreateBuffer(cxt(), CL_MEM_HOST_READ_ONLY, NIP_SEGMENTS * sizeof(cl_int), NULL, &run_status);
 
-    compute_nipBin(m, csrRowCIntProdNum, clIntBin, control);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
 
-    std::vector<int> intBin(NIP_SEGMENTS, 0);
+        return run_status;
+    }
+
+    run_status = clEnqueueFillBuffer(control->queue(), clinnBin, &pattern, sizeof(cl_int), 0, NIP_SEGMENTS * sizeof(cl_int), 0, NULL, NULL);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clinnBin);
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
+
+    // divide the rows into bins
+    run_status = compute_nipBin(m, csrRowCInnProdNum, clinnBin, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clinnBin);
+        ::clReleaseMemObject(csrRowInnProdNum);
+
+        return run_status;
+    }
+    // retrieve the result to CPU
+    int innBin[NIP_SEGMENTS];
 
     run_status = clEnqueueReadBuffer(control->queue(),
-                                     clintBin,
+                                     clinnBin,
                                      1,
                                      0,
                                      NIP_SEGMENTS * sizeof(int),
-                                     intBin.data(),
+                                     innBin,
                                      0,
                                      0,
                                      0);
-    ::clReleaseMemObject(clIntBin);
+    
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clinnBin);
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // free inner-product bins
+    run_status = ::clReleaseMemObject(clinnBin);
 
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+
+    // print the statistics
     char *intprodstring[NIP_SEGMENTS] = {"0", "1", "2", "3~4", "5~8", "9~16", "17~32", "33~64", "65~128", "129~256", "257~512", "513~1024", "1025~2048", "2049~4096", "4097~8192", "8193~"};
 
-    for(int i = 0; i < NIP_SEGMENTS; i++)
-        printf("%s: %d\n", intprodstring[i], intBin[i]);
+    for (int i = 0; i < NIP_SEGMENTS; i++)
+        printf("%s: %d\n", intprodstring[i], innBin[i]);
 
     // STAGE 3 Reorder rows of C based on the bins
-    std::vector<int> intPtr(NIP_SEGMENTS, 0);
+    // set the base pointer of each bin based on the size of each bin
+    int innPtr[NIP_SEGMENTS], i;
 
-    int i;
-    for(i = 1; i < NIP_SEGMENTS; i++)
-        intPtr[i] = intPtr[i - 1] + intBin[i - 1];
+    innPtr[0] = 0;
 
-    cl_mem clIntPtr = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, NIP_SEGMENTS * sizeof(cl_int), NULL, &run_status );
-    run_status = clEnqueueWriteBuffer(control->queue(),
-                                     clIntPtr,
+    for (i = 1; i < NIP_SEGMENTS; i++)
+        innPtr[i] = innPtr[i - 1] + innBin[i - 1];
+    // copy the base pointers to GPU
+    cl_mem clinnPtr = ::clCreateBuffer(cxt(), CL_MEM_COPY_HOST_PTR, NIP_SEGMENTS * sizeof(cl_int), innPtr, &run_status);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // buffer of reordered rows
+    cl_mem csrRowCReorder = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, m * sizeof(cl_int), NULL, &run_status);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clinnPtr);
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // reorder rows based on bins
+    run_status = compute_reorderRowNip(m, csrRowCInnProdNum, clinnPtr, csrRowCReorder, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clinnPtr);
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // bin pointer will not be used further in GPU. free!
+    run_status = ::clReleaseMemObject(clinnPtr);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+
+    // STAGE 4  Count the number of non-zero elements of each row of output matrix for all groups
+    // the number of non-zeros of each row of C.
+    cl_mem csrRowCNnzSize = ::clCreateBuffer(cxt(), CL_MEM_HOST_NO_ACCESS, m * sizeof(cl_int), NULL, &run_status);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // initialize as 0
+    run_status = clEnqueueFillBuffer(control->queue(), csrRowCNnzSize, &pattern, sizeof(cl_int), 0, m * sizeof(cl_int), 0, NULL, NULL);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowCNnzSize);
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // maximun number of non-zeros in a row
+    cl_mem clMaxNnz = ::clCreateBuffer(cxt(), CL_MEM_HOST_READ_ONLY, sizeof(cl_int), NULL, &run_status);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowCNnzSize);
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // initialize as 0
+    run_status = clEnqueueFillBuffer(control->queue(), clMaxNnz, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clMaxNnz);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // compute the number of non-zeros of each row of C
+    run_status = compute_nnzC(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCReorder, csrRowCInnProdNum, csrRowCNnzSize, innBin, innPtr, max_intprod, clMaxNnz, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clMaxNnz);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        ::clReleaseMemObject(csrRowInnProdNum);
+        
+        return run_status;
+    }
+    // the number of inner-product numbers are not be used again. free!
+    run_status = ::clReleaseMemObject(csrRowCInnProdNum);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clMaxNnz);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // retrieve the maxinum number of non-zeros to CPU
+    int max_nnz = 0;
+
+    run_status = clEnqueueReadBuffer(control->queue(),
+                                     clMaxNnz,
                                      1,
                                      0,
-                                     NIP_SEGMENTS * sizeof(int),
-                                     intPtr.data(),
+                                     sizeof(int),
+                                     &max_nnz,
                                      0,
                                      0,
                                      0);
-    cl_mem csrRowCReorder = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, m * sizeof( cl_int ), NULL, &run_status );
-    clEnqueueFillBuffer(control->queue(), csrRowCReorder, &pattern, sizeof(cl_int), 0, m * sizeof(cl_int), 0, NULL, NULL);
+    
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clMaxNnz);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // maximum number of non-zeros are not used later. free!
+    run_status = ::clReleaseMemObject(clMaxNnz);
 
-    compute_reorderRowNip(m, csrRowCIntProdNum, clIntPtr, csrRowCReorder, control);
-
-    ::clReleaseMemObject(clIntPtr);
-
-    // STAGE 4  Count the number of non-zero elements of each row of output matrix for all groups
-    cl_mem csrRowCNnzSize = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, m * sizeof( cl_int ), NULL, &run_status );
-    clEnqueueFillBuffer(control->queue(), csrRowCNnzSize, &pattern, sizeof(cl_int), 0, m * sizeof(cl_int), 0, NULL, NULL);
-    cl_mem clMaxNnz = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE,  sizeof( cl_int ), NULL, &run_status );
-    clEnqueueFillBuffer(control->queue(), csrRowCNnzSize, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
-
-    compute_nnzC(csrRowPtrA, csrColIndA, csrRowPtrB, csrColIndB, csrRowCReorder, csrRowCIntProdNum, csrRowCNnzSize, intBin, intPtr, max_intprod, clMaxNnz, control);
-
-    ::clReleaseMemObject(csrRowCIntProdNum);
-
-	int max_nnz = 0;
-	run_status = clEnqueueReadBuffer(control->queue(),
-		clMaxNnz,
-		1,
-		0,
-		sizeof(int),
-		&max_nnz,
-		0,
-		0,
-		0);
-	::clReleaseMemObject(clNnzBin);
-	::clReleaseMemObject(clMaxNnz);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
 
     // STAGE 5 Perform Prefix-sum for constructing C's row array
+    matC->row_pointer = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, (m + 1) * sizeof(cl_int), NULL, &run_status);
 
-    cl_mem buffer = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, m * sizeof( cl_int ), NULL, &run_status );
-    
-    clEnqueueCopyBuffer(control->queue(), csrRowCNnzSize, buffer, 0, 0, m * sizeof(cl_int), 0, NULL, NULL);
-    compute_scan(m, buffer, control);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
 
-    matC->row_pointer = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, (m + 1) * sizeof( cl_int ), NULL, &run_status );
     cl_mem csrRowPtrC = matC->row_pointer;
+    // First element is 0
+    run_status = clEnqueueFillBuffer(control->queue(), csrRowPtrC, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
 
-    clEnqueueCopyBuffer(control->queue(), buffer, csrRowPtrC, 0, sizeof(cl_int), m * sizeof(cl_int), 0, NULL, NULL);
-    clEnqueueFillBuffer(control->queue(), csrRowPtrC, &pattern, sizeof(cl_int), 0, sizeof(cl_int), 0, NULL, NULL);
-    ::clReleaseMemObject(buffer);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // copy from csrRowCNnzSize to csrRowPtrC with 0~(m-1)'th elements to 1~m'th element
+    run_status = clEnqueueCopyBuffer(control->queue(), csrRowCNnzSize, csrRowPtrC, 0, sizeof(cl_int), m * sizeof(cl_int), 0, NULL, NULL);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // Perform prefix-scan on C's rows
+    run_status = compute_scan(m + 1, csrRowPtrC, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
 
     // STAGE 6 Divide the rows into groups by the number of non-zero elements
     // bin: {0, 1, 2, 3~4, 5~8, 9~16, 17~32, 33~64, 65~128, 129~256, 257~512, 513~~1024, 1025~2048, 2049~4096, 4097~}
-    cl_mem clNnzBin = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, NNZ_SEGMENTS * sizeof(cl_int), NULL, &run_status );
-    clEnqueueFillBuffer(control->queue(), clIntBin, &pattern, sizeof(cl_int), 0, NNZ_SEGMENTS * sizeof(cl_int), 0, NULL, NULL);
+    cl_mem clNnzBin = ::clCreateBuffer(cxt(), CL_MEM_HOST_READ_ONLY, NNZ_SEGMENTS * sizeof(cl_int), NULL, &run_status);
 
-    compute_nnzBin(m, csrRowCNnzSize, clNnzBin, control);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // initialize bins to 0
+    run_status = clEnqueueFillBuffer(control->queue(), clNnzBin, &pattern, sizeof(cl_int), 0, NNZ_SEGMENTS * sizeof(cl_int), 0, NULL, NULL);
 
-    td::vector<int> nnzBin(NNZ_SEGMENTS, 0);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clNnzBin);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+
+    run_status = compute_nnzBin(m, csrRowCNnzSize, clNnzBin, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clNnzBin);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // retrieve bins to CPU
+    int nnzBin[NNZ_SEGMENTS];
 
     run_status = clEnqueueReadBuffer(control->queue(),
                                      clNnzBin,
                                      1,
                                      0,
                                      NNZ_SEGMENTS * sizeof(int),
-                                     nnzBin.data(),
+                                     nnzBin,
                                      0,
                                      0,
                                      0);
-    ::clReleaseMemObject(clNnzBin);
-
+    
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clNnzBin);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // bins are not used later on GPU. free!
+    run_status = ::clReleaseMemObject(clNnzBin);
+    
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // print the statistics
     char *nnzprodstring[NNZ_SEGMENTS] = {"0", "1", "2", "3~4", "5~8", "9~16", "17~32", "33~64", "65~128", "129~256", "257~512", "513~1024", "1025~2048", "2049~4096", "4097~"};
 
-    for(int i = 0; i < NNZ_SEGMENTS; i++)
+    for (int i = 0; i < NNZ_SEGMENTS; i++)
         printf("%s: %d\n", nnzprodstring[i], nnzBin[i]);
 
     // STAGE 7 Reorder rows of C based on the bins
-    std::vector<int> nnzPtr(NNZ_SEGMENTS, 0);
+    int nnzPtr[NNZ_SEGMENTS];
 
-    int i;
-    for(i = 1; i < NNZ_SEGMENTS; i++)
+    nnzPtr[0] = 0;
+
+    for (i = 1; i < NNZ_SEGMENTS; i++)
         nnzPtr[i] = nnzPtr[i - 1] + nnzBin[i - 1];
+    // Set the base pointer buffer in GPU
+    cl_mem clNnzPtr = ::clCreateBuffer(cxt(), CL_MEM_HOST_WRITE_ONLY, NNZ_SEGMENTS * sizeof(cl_int), NULL, &run_status);
 
-    cl_mem clNnzPtr = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, NNZ_SEGMENTS * sizeof(cl_int), NULL, &run_status );
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // copy the base pointers to GPU
     run_status = clEnqueueWriteBuffer(control->queue(),
-                                     clNnzPtr,
-                                     1,
-                                     0,
-                                     NNZ_SEGMENTS * sizeof(int),
-                                     nnzPtr.data(),
-                                     0,
-                                     0,
-                                     0);
+                                      clNnzPtr,
+                                      1,
+                                      0,
+                                      NNZ_SEGMENTS * sizeof(int),
+                                      nnzPtr,
+                                      0,
+                                      0,
+                                      0);
 
-    compute_reorderRowNnz(m, csrRowCNnzSize, clNnzPtr, csrRowCReorder, control);
-    
-    ::clReleaseMemObject(clNnzPtr);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clNnzPtr);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // reorder the rows based on bins
+    run_status = compute_reorderRowNnz(m, csrRowCNnzSize, clNnzPtr, csrRowCReorder, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(clNnzPtr);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // pointer buffers are not used later. free!
+    run_status = ::clReleaseMemObject(clNnzPtr);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
 
     // STAGE 8 Compute values
     int nnzC;
+    // read number of non-zeros of C to CPU
+    run_status = clEnqueueReadBuffer(control->queue(), csrRowPtrC, 1, m * sizeof(cl_int), sizeof(cl_int), &nnzC, 0, 0, 0);
 
-    clEnqueueReadBuffer(control->queue(), csrRowPtrC, 1, m * sizeof(cl_int), sizeof(cl_int), &nnzC, 0, 0, 0);
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // initialize column indices' array
+    matC->col_indices = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, nnzC * sizeof(cl_int), NULL, &run_status);
 
-    matC->col_indices = ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, nnzC * sizeof( cl_int ), NULL, &run_status );
-    matC->values =     ::clCreateBuffer( cxt(), CL_MEM_READ_WRITE, nnzC * sizeof( cl_float ), NULL, &run_status );
+    cl_mem csrColIndC = matC->col_indices;
 
-    ::clReleaseMemObject(csrRowCNnzSize);
-   
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+    // initialize values' array
+    matC->values = ::clCreateBuffer(cxt(), CL_MEM_READ_WRITE, nnzC * sizeof(cl_float), NULL, &run_status);
+
+    cl_mem csrColValC = matC->values;
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrColIndC);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+
+    // Compute the values
+    run_status = compute_valC(csrRowPtrA, csrColIndA, csrColValA, csrRowPtrB,
+                 csrColIndB, csrColValB, csrRowPtrC, csrColIndC,
+                 csrColValC, csrRowCReorder, csrRowCNnzSize, nnzBin,
+                 nnzPtr, max_nnz, control);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrColIndC);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+
+    //Free buffers
+    run_status = ::clReleaseMemObject(csrRowCReorder);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrColValC);
+        ::clReleaseMemObject(csrColIndC);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+
+    run_status = ::clReleaseMemObject(csrRowCNnzSize);
+
+    if(run_status != CL_SUCCESS)
+    {
+        ::clReleaseMemObject(csrColValC);
+        ::clReleaseMemObject(csrColIndC);
+        ::clReleaseMemObject(csrRowPtrC);
+        ::clReleaseMemObject(csrRowCNnzSize);
+        
+        return run_status;
+    }
+
     matC->num_rows = m;
     matC->num_cols = n;
-    matC->num_nonzeros  = nnzC;
+    matC->num_nonzeros = nnzC;
 
+    return clsparseSuccess;
 }
-

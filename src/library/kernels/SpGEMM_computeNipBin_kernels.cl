@@ -33,9 +33,9 @@
 
 __kernel
 void compute_nipBin_kernel(
-        __global const int *d_csrRowCIntProdNum,
-        __local int *s_intBin,
-        __global int *d_intBin,
+        __global const int *d_csrRowCInnProdNum,
+        __local int *s_innBin,
+        __global int *d_innBin,
         const int m)
 {
     int global_id = get_global_id(0);
@@ -43,41 +43,40 @@ void compute_nipBin_kernel(
     int i;
 
     if(local_id < NIP_SEGMENTS)
-        s_intBin[local_id] = 0;
+        s_innBin[local_id] = 0;
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
     if(global_id >= m)
         return;
 
-    int intSize =  d_csrRowCIntProdNum[global_id];
-
-    if(intSize == 0)
-        atomic_add(&s_intBin[0], 1);
-    else if(intSize == 1)
-        atomic_add(&s_intBin[1], 1);
-    else if(intSize == 2)
-        atomic_add(&s_intBin[2], 1);
-    else if(intSize > 8192)
-        atomic_add(&s_intBin[NIP_SEGMENTS - 1], 1);
+    int innSize =  d_csrRowCInnProdNum[global_id];
+    // add the count in each bin with atomic_add on local memory
+    if(innSize == 0)
+        atomic_add(&s_innBin[0], 1);
+    else if(innSize == 1)
+        atomic_add(&s_innBin[1], 1);
+    else if(innSize == 2)
+        atomic_add(&s_innBin[2], 1);
+    else if(innSize > 8192)
+        atomic_add(&s_innBin[NIP_SEGMENTS - 1], 1);
     else
     {
         for(i = 3; i < NIP_SEGMENTS - 1; i++)
         {
-            if((1 << (i - 2)) < intSize && intSize <= (1 << (i - 1)))
+            if((1 << (i - 2)) < innSize && innSize <= (1 << (i - 1)))
             {
-                atomic_add(&s_intBin[i], 1);
+                atomic_add(&s_innBin[i], 1);
                 break;
             }
         }
     }
 
     barrier(CLK_LOCAL_MEM_FENCE);
-
+    // add the result into global memory
     if(local_id < NUM_SEGMENTS)
     {
-        int intBinPartial = s_intBin[local_id];
-        atomic_add(&d_intBin[local_id], intBinPartial);
+        int innBinPartial = s_innBin[local_id];
+        atomic_add(&d_innBin[local_id], innBinPartial);
     }
 }
-

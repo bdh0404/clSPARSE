@@ -423,4 +423,3 @@ void compute_valC_tb_global(
 		d_csrColValC[offset + count] = d_valhashtable[doffset + i];
 	}
 }
-

@@ -23,7 +23,7 @@ void compute_ReorderRowNnz_kernel(
     if(nnzSize == 0) location = atomic_add(&d_clNnzPtr[0], 1);
     else if(nnzSize == 1) location = atomic_add(&d_clNnzPtr[1], 1);
     else if(nnzSize == 2) location = atomic_add(&d_clNnzPtr[2], 1);
-    else if(4096 < intSize) location = atomic_add(&d_clNnzPtr[NNZ_SEGMENTS - 1], 1);
+    else if(4096 < innSize) location = atomic_add(&d_clNnzPtr[NNZ_SEGMENTS - 1], 1);
     else
     {
         int i;
@@ -40,4 +40,3 @@ void compute_ReorderRowNnz_kernel(
         
     d_csrRowCReorder[location] = global_id;
 }
-

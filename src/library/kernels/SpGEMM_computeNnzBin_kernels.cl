@@ -80,4 +80,3 @@ void compute_nnzBin_kernel(
         atomic_add(&d_nnzBin[local_id], nnzBinPartial);
     }
 }
-

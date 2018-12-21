@@ -12,6 +12,7 @@ void compute_nnzC_0(
     if(global_id >= bin) return;
 
     int row_id = d_csrRowCReorder[global_id];
+    // set the number of non-zero elements as 0
     d_csrRowCNnzSize[row_id] = 0;
 }
 
@@ -27,6 +28,7 @@ void compute_nnzC_1(
     if(global_id >= bin) return;
 
     int row_id = d_csrRowCReorder[ptr + global_id];
+    // set the number of non-zero elements as 1
     d_csrRowCNnzSize[row_id] = 1;
 }
 
@@ -41,13 +43,13 @@ void compute_nnzC_pwarp(
         __local int *hashtable,
         const int bin,
         const int ptr,
-        const int intSize)
+        const int innSize)
 {
     int global_id = get_global_id(0);
-    int rid = global_id / intSize;
+    int rid = global_id / innSize;
 
     int local_id = get_local_id(0);
-
+    // initialize hash table as -1
     hashtable[local_id] = -1;
     
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -57,16 +59,17 @@ void compute_nnzC_pwarp(
     int row_id = d_csrRowCReorder[ptr + rid];
     int start_col_index_A, stop_col_index_A;  // index_type
     int start_col_index_B, stop_col_index_B;  // index_type
-    int tid = global_id % intSize;
-    int local_rid = rid * intSize;
+    int tid = global_id % innSize;
+    int local_rid = rid * innSize;
 
     start_col_index_A = d_csrRowPtrA[row_id];
     stop_col_index_A  = d_csrRowPtrA[row_id + 1];
 
     int i, nnz = 0;
-
-    for (i = start_col_index_A + tid; i < stop_col_index_A; i += intSize)
+    // for each column index of A
+    for (i = start_col_index_A + tid; i < stop_col_index_A; i += innSize)
     {
+        // find the corresponding row of B
         int row_id_B = d_csrColIndA[i];
 
         start_col_index_B = d_csrRowPtrB[row_id_B];
@@ -76,8 +79,9 @@ void compute_nnzC_pwarp(
 
         for(j = start_col_index_B; j < stop_col_index_B; j++)
         {
+            // for each column index
             int key = d_csrColIndB[j];
-            int hash = (bcol * HASH_CONST) % intSize;
+            int hash = (bcol * HASH_CONST) % innSize;
             int addr = local_rid + hash;
 
             while(true)
@@ -96,7 +100,7 @@ void compute_nnzC_pwarp(
                 }
                 else
                 {
-                    hash = (hash + 1) % intSize;
+                    hash = (hash + 1) % innSize;
                     addr = local_rid + hash;
                 }
             }
@@ -125,7 +129,7 @@ void compute_nnzC_tb(
         __local int *hashtable,
         const int bin,
         const int ptr,
-        const int intSize)
+        const int innSize)
 {
     int group_id = get_group_id(0);
 
@@ -135,7 +139,7 @@ void compute_nnzC_tb(
     int local_size = get_local_size(0);
     int i;
 
-    for(i = local_id; i < intSize; i += local_size)
+    for(i = local_id; i < innSize; i += local_size)
         hashtable[i] = -1;
 
     barrier(CLK_LOCAL_MEM_FENCE);
@@ -155,7 +159,7 @@ void compute_nnzC_tb(
         for(j = start_col_index_B + local_id; j < stop_col_index_B; j += local_size)
         {
             int key = d_csrColIndB[j];
-            int hash = (bcol * HASH_CONST) % intSize;
+            int hash = (bcol * HASH_CONST) % innSize;
 
             while(true)
             {
@@ -171,7 +175,7 @@ void compute_nnzC_tb(
                         break;
                     }
                 }
-                else hash = (hash + 1) % intSize;
+                else hash = (hash + 1) % innSize;
             }
         }
     }
@@ -314,10 +318,10 @@ void compute_nnzC_tb_global(
 
             while(true)
             {
-                if(hashtable[hash] == key) break;
-                else if(hashtable[hash] == -1)
+                if(d_hashtable[hash] == key) break;
+                else if(d_hashtable[hash] == -1)
                 {
-                    int old = atomic_cmpxchg(hashtable + hash, -1, key);
+                    int old = atomic_cmpxchg(d_hashtable + hash, -1, key);
                     if(old == -1)
                     {
                         nnz++;
@@ -336,7 +340,7 @@ void compute_nnzC_tb_global(
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id == 0) hashtable[0] = 0;
+    if(local_id == 0) d_hashtable[0] = 0;
 
     barrier(CLK_LOCAL_MEM_FENCE);
     atomic_add(&hashtable[0], nnz);
@@ -349,4 +353,3 @@ void compute_nnzC_tb_global(
         atomic_max(d_max_nnz, nnz);
     }
 }
-

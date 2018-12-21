@@ -9,30 +9,30 @@
 
 __kernel
 void compute_ReorderRowNip_kernel(
-        __global const int *d_csrRowCIntProdNum,
-        __global int *d_clIntPtr,
+        __global const int *d_csrRowCInnProdNum,
+        __global int *d_clinnPtr,
         __global int *d_csrRowCReorder,
         const int m)
 {
     int global_id = get_global_id(0);
     if(global_id >= m) return;
 
-    int intSize = d_csrRowPtrCIntSize[global_id];
+    int innSize = d_csrRowPtrCinnSize[global_id];
     int location;
 
-    if(intSize == 0) location = atomic_add(&d_clIntPtr[0], 1);
-    else if(intSize == 1) location = atomic_add(&d_clIntPtr[1], 1);
-    else if(intSize == 2) location = atomic_add(&d_clIntPtr[2], 1);
-    else if(8192 < intSize) location = atomic_add(&d_clIntPtr[NIP_SEGMENTS - 1], 1);
+    if(innSize == 0) location = atomic_add(&d_clinnPtr[0], 1);
+    else if(innSize == 1) location = atomic_add(&d_clinnPtr[1], 1);
+    else if(innSize == 2) location = atomic_add(&d_clinnPtr[2], 1);
+    else if(8192 < innSize) location = atomic_add(&d_clinnPtr[NIP_SEGMENTS - 1], 1);
     else
     {
         int i;
         
         for(i = 3; i < NIP_SEGMENTS - 1; i++)
         {
-            if((1 << (i - 2)) < intSize && intSize <= (1 << (i - 1)))
+            if((1 << (i - 2)) < innSize && innSize <= (1 << (i - 1)))
             {
-                location = atomic_add(&d_clIntPtr[i], 1);
+                location = atomic_add(&d_clinnPtr[i], 1);
                 break;
             }
         }
@@ -40,4 +40,3 @@ void compute_ReorderRowNip_kernel(
         
     d_csrRowCReorder[location] = global_id;
 }
-

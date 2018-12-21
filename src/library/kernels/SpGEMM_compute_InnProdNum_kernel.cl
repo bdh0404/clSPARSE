@@ -30,11 +30,11 @@
 #endif
 
 __kernel
-void compute_IntProdNum_kernel(
+void compute_InnProdNum_kernel(
         __global const int *d_csrRowPtrA,
         __global const int *d_csrColIndA,
         __global const int *d_csrRowPtrB,
-        __global int *d_csrRowCIntProdNum,
+        __global int *d_csrRowCInnProdNum,
         __local int *s_max_intprod,
         __global int *d_max_intprod,
         const int m)
@@ -56,7 +56,7 @@ void compute_IntProdNum_kernel(
             row_size_Ct += strideB;
         }
         // write the result
-        d_csrRowCIntProdNum[global_id] = row_size_Ct;
+        d_csrRowCInnProdNum[global_id] = row_size_Ct;
     }
 
     // calculate maximum number in each LOCAL memory first,
@@ -107,5 +107,3 @@ void compute_IntProdNum_kernel(
         atomic_max(d_max_intprod, s_max_intprod[0]);
     }
 }
-
-
