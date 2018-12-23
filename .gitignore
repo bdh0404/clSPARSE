@@ -47,9 +47,11 @@ x64/
 *.vcxproj
 .vs/
 cmake_install.cmake
-CmakeCache.txt
+CMakeCache.txt
+CMakeList.txt
 *.sln
 
 library/clSPARSEConfigVersion.cmake
 library/clSPARSEConfig.cmake
 library/clsparse_export.h
+./vscode

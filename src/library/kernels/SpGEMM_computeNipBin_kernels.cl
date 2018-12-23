@@ -22,15 +22,17 @@
 * ************************************************************************ */
 
 //#define GROUPSIZE_256 256
-#if defined(cl_khr_global_int32_base_atomics) && defined(cl_khr_global_int32_extended_atomics)
-    #pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable
-    #pragma OPENCL_EXTENSION cl_khr_global_int32_extended_atomics : enable
-#else
-    #error "Required 32-bit atomics not supported by this OpenCL implemenation."
-#endif
 
 #define NIP_SEGMENTS 16
 
+/**
+ * @brief Count the number of rows in each intermediate products' bin
+ * 
+ * @param d_csrRowCInnProdNum Number of products in each C's row
+ * @param s_innBin Local memory buffer of bins of C's rows
+ * @param d_innBin Bins of C's rows
+ * @param m Number of C's rows
+ */
 __kernel
 void compute_nipBin_kernel(
         __global const int *d_csrRowCInnProdNum,
@@ -42,32 +44,33 @@ void compute_nipBin_kernel(
     int local_id = get_local_id(0);
     int i;
 
+    // initialize the local buffer to 0
     if(local_id < NIP_SEGMENTS)
         s_innBin[local_id] = 0;
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(global_id >= m)
-        return;
-
-    int innSize =  d_csrRowCInnProdNum[global_id];
-    // add the count in each bin with atomic_add on local memory
-    if(innSize == 0)
-        atomic_add(&s_innBin[0], 1);
-    else if(innSize == 1)
-        atomic_add(&s_innBin[1], 1);
-    else if(innSize == 2)
-        atomic_add(&s_innBin[2], 1);
-    else if(innSize > 8192)
-        atomic_add(&s_innBin[NIP_SEGMENTS - 1], 1);
-    else
+    if(global_id < m)
     {
-        for(i = 3; i < NIP_SEGMENTS - 1; i++)
+        int innSize =  d_csrRowCInnProdNum[global_id];
+        // add the count in each bin with atomic_add on local memory
+        if(innSize == 0)
+            atomic_add(&s_innBin[0], 1);
+        else if(innSize == 1)
+            atomic_add(&s_innBin[1], 1);
+        else if(innSize == 2)
+            atomic_add(&s_innBin[2], 1);
+        else if(innSize > 8192)
+            atomic_add(&s_innBin[NIP_SEGMENTS - 1], 1);
+        else
         {
-            if((1 << (i - 2)) < innSize && innSize <= (1 << (i - 1)))
+            for(i = 3; i < NIP_SEGMENTS - 1; i++)
             {
-                atomic_add(&s_innBin[i], 1);
-                break;
+                if((1 << (i - 2)) < innSize && innSize <= (1 << (i - 1)))
+                {
+                    atomic_add(&s_innBin[i], 1);
+                    break;
+                }
             }
         }
     }

@@ -21,14 +21,17 @@
 *  THE SOFTWARE.
 * ************************************************************************ */
 
-
-#if defined(cl_khr_global_int32_base_atomics) && defined(cl_khr_global_int32_extended_atomics)
-    #pragma OPENCL EXTENSION cl_khr_global_int32_base_atomics : enable
-    #pragma OPENCL_EXTENSION cl_khr_global_int32_extended_atomics : enable
-#else
-    #error "Required 32-bit atomics not supported by this OpenCL implemenation."
-#endif
-
+/**
+ * @brief Compute the number of products of each C's row
+ * 
+ * @param d_csrRowPtrA A's row pointer array
+ * @param d_csrColIndA A's column indices array
+ * @param d_csrRowPtrB B's row pointer array
+ * @param d_csrRowCInnProdNum Buffer for storing the result
+ * @param s_max_intprod Local memory buffer for storing the maximum number of products in a workgroup
+ * @param d_max_inn_prod Buffer for storing the maximum number of products of all C's rows
+ * @param m Number of C's rows
+ */
 __kernel
 void compute_InnProdNum_kernel(
         __global const int *d_csrRowPtrA,
@@ -36,7 +39,7 @@ void compute_InnProdNum_kernel(
         __global const int *d_csrRowPtrB,
         __global int *d_csrRowCInnProdNum,
         __local int *s_max_intprod,
-        __global int *d_max_intprod,
+        __global int *d_max_inn_prod,
         const int m)
 {
     int global_id = get_global_id(0);
@@ -59,51 +62,26 @@ void compute_InnProdNum_kernel(
         d_csrRowCInnProdNum[global_id] = row_size_Ct;
     }
 
-    // calculate maximum number in each LOCAL memory first,
+    // calculate maximum number in each local memory first,
     s_max_intprod[local_id] = row_size_Ct;
 
     barrier(CLK_LOCAL_MEM_FENCE);
 
-    if(local_id < 128)
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 128]);
-    
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if(local_id < 64)
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 64]);
-    
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if(local_id < 32)
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 32]);
-    
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if(local_id < 16)
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 16]);
-    
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if(local_id < 8)
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 8]);
-    
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if(local_id < 4)
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 4]);
-    
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if(local_id < 2)
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 2]);
-    
-    barrier(CLK_LOCAL_MEM_FENCE);
+    int i = 128;
+    // compare numbers in local memory and the final result will be stored in s_max_intprod[0]
+    while(i > 0)
+    {
+        if(local_id < i)
+            s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + i]);
+        
+        i >>= 1;
+        
+        barrier(CLK_LOCAL_MEM_FENCE);
+    }
 
     if(local_id == 0)
     {
-        s_max_intprod[local_id] = max(s_max_intprod[local_id], s_max_intprod[local_id + 1]);
-        
         // and calculate real maximum number in GLOBAL memory
-        atomic_max(d_max_intprod, s_max_intprod[0]);
+        atomic_max(d_max_inn_prod, s_max_intprod[0]);
     }
 }

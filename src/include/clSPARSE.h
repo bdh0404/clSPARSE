@@ -63,7 +63,7 @@ extern "C" {
         clsparseInvalidBufferSize = CL_INVALID_BUFFER_SIZE,
         clsparseInvalidHostPtr = CL_INVALID_HOST_PTR,
         clsparseMemObjectAllocationFailure = CL_MEM_OBJECT_ALLOCATION_FAILURE,
-        clsparseMisalignedSubBufferOffset = C__MISALIGNED_SUB_BUFFER_OFFSET,
+        clsparseMisalignedSubBufferOffset = CL_MISALIGNED_SUB_BUFFER_OFFSET,
         clsparseExecStatusErrorForEventsInWaitList = CL_EXEC_STATUS_ERROR_FOR_EVENTS_IN_WAIT_LIST,
         clsparseMemCopyOverlap = CL_MEM_COPY_OVERLAP,
         /**@}*/

@@ -20,205 +20,72 @@
  * that was adapted from the online courseslides for ME964 at Wisconsin 
  * taught by Prof. Dan Negrut and from slides Presented by David Luebke.  */
 
+/**
+ * @brief Perform Prefix-scan for constructing C's row pointer array in each block
+ * 
+ * @param d_array Array that will be prefix-scanned in block
+ * @param s_scan Local memory buffer for prefix-scan
+ * @param d_sum Buffer for sum value of each block
+ * @param m The number of C's rows
+ */
 inline
-void scan_block(__global int *d_array, __local volatile short *s_scan, __global int *d_sum, const int m)
+void scan_block(__global int *d_array, __local int *s_scan, __global int *d_sum, const int m)
 {
+    // uses Hillis& Steele algorithm because of bank conflict
     int local_id = get_local_id(0);
     int global_id = get_global_id(0);
     int group_id = get_group_id();
 
-    if(2 * global_id < m)
-        s_scan[2 * local_id] = d_array[2 * global_id];
+    // load 256 integers into local memory buffer
+    if(global_id < m)
+        s_scan[local_id] = d_array[global_id];
     else
-        s_scan[2 * local_id] = 0;
-    if(2 * global_id + 1 < m)
-        s_scan[2 * local_id + 1] = d_array[2 * global_id + 1];
-    else
-        s_scan[2 * local_id + 1] = 0;
+        s_scan[local_id] = 0;
+    s_scan[256 + local_id] = 0;
 
-    int ai, bi;
-    int baseai = 1 + 2 * local_id;
-    int basebi = baseai + 1;
-    short temp;
-
-    ai = baseai - 1;     
-    bi = basebi - 1;     
-    s_scan[bi] += s_scan[ai];
-
+    // prefix-scan on local memory
     barrier(CLK_LOCAL_MEM_FENCE);
-    if (local_id < 128) 
 
-    { 
-        ai =  2 * baseai - 1;  
-        bi =  2 * basebi - 1;   
-        s_scan[bi] += s_scan[ai]; 
+    int i, out = 0, in = 1;
+    for(i = 1; i < 256; i <<= 1)
+    {
+        out = 1 - out;
+        in = 1 - out;
+        if(local_id >= i)
+            s_scan[256 * out + local_id] += s_scan[256 * in + local_id - i];
+        else
+            s_scan[256 * out + local_id] = s_scan[256 * in + local_id];
+        
+        barrier(CLK_LOCAL_MEM_FENCE);
     }
+    // write scanned array into global memory
+    if(global_id < m)
+        d_array[global_id] = s_scan[256 * out + local_id];
 
-    barrier(CLK_LOCAL_MEM_FENCE);
-    if (local_id < 64)  
-    { 
-        ai =  4 * baseai - 1;  
-        bi =  4 * basebi - 1;   
-        s_scan[bi] += s_scan[ai]; 
-    }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 32) 
-    { 
-        ai =  8 * baseai - 1;  
-        bi =  8 * basebi - 1;   
-        s_scan[bi] += s_scan[ai]; 
-    }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 16) 
-    { 
-        ai =  16 * baseai - 1;  
-        bi =  16 * basebi - 1;   
-        s_scan[bi] += s_scan[ai]; 
-    }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 8)  
-    { 
-        ai = 32 * baseai - 1;  
-        bi = 32 * basebi - 1;   
-        s_scan[bi] += s_scan[ai]; 
-    }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 4)  
-    { 
-        ai = 64 * baseai - 1;  
-        bi = 64 * basebi - 1;   
-        s_scan[bi] += s_scan[ai]; 
-    }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 2)  
-    { 
-        ai = 128 * baseai - 1;  
-        bi = 128 * basebi - 1;   
-        s_scan[bi] += s_scan[ai]; 
-    }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id == 0) 
-    { 
-        s_scan[511] += s_scan[255]; 
-        s_scan[512] = s_scan[511]; 
-        s_scan[511] = 0; 
-        temp = s_scan[255]; 
-        s_scan[255] = 0; 
-        s_scan[511] += temp; 
-        }
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 2)  
-	{ 
-		ai = 128 * baseai - 1;  
-		bi = 128 * basebi - 1;   
-		temp = s_scan[ai]; 
-		s_scan[ai] = s_scan[bi]; 
-		s_scan[bi] += temp;
-	}
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 4)  
-	{ 
-		ai = 64 * baseai - 1; 
-		bi = 64 * basebi - 1;   
-		temp = s_scan[ai]; 
-		s_scan[ai] = s_scan[bi]; 
-		s_scan[bi] += temp;
-	}
-    barrier(CLK_LOCAL_MEM_FENCE);
-    if (local_id < 8)  
-	{ 
-		ai = 32 * baseai - 1;  
-		bi = 32 * basebi - 1;   
-		temp = s_scan[ai]; 
-		s_scan[ai] = s_scan[bi]; 
-		s_scan[bi] += temp;
-	}
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 16) 
-	{ 
-		ai =  16 * baseai - 1;  
-		bi =  16 * basebi - 1;   
-		temp = s_scan[ai]; 
-		s_scan[ai] = s_scan[bi]; 
-		s_scan[bi] += temp;
-	}
-    barrier(CLK_LOCAL_MEM_FENCE);
-    if (local_id < 32) 
-	{ 
-		ai =  8 * baseai - 1;  
-		bi =  8 * basebi - 1;   
-		temp = s_scan[ai]; 
-		s_scan[ai] = s_scan[bi]; 
-		s_scan[bi] += temp;
-	}
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    if (local_id < 64) 
-	{ 
-		ai =  4 * baseai - 1;  
-		bi =  4 * basebi - 1;   
-		temp = s_scan[ai]; 
-		s_scan[ai] = s_scan[bi]; 
-		s_scan[bi] += temp;
-	}
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-    if (local_id < 128) 
-	{ 
-		ai =  2 * baseai - 1;  
-		bi =  2 * basebi - 1;   
-		temp = s_scan[ai]; 
-		s_scan[ai] = s_scan[bi]; 
-		s_scan[bi] += temp;
-	}
-
-    barrier(CLK_LOCAL_MEM_FENCE);
-
-    ai = baseai - 1;   
-	bi = basebi - 1;   
-	temp = s_scan[ai]; 
-	s_scan[ai] = s_scan[bi]; 
-	s_scan[bi] += temp;
-
-    if(2 * global_id < m)
-        d_array[2 * global_id] = s_scan[2 * local_id];
-    if(2 * global_id + 1 < m)
-        d_array[2 * global_id + 1] = s_scan[2 * local_id + 1];
-    
+    // store the sum value into d_sum
     if (local_id == 0)
-        d_sum[group_id] = s_scan[511];
+        d_sum[group_id] = s_scan[256 * out + 255];
 }
 
+/**
+ * @brief Add prefix-scanned sum value to each block
+ * 
+ * @param d_array Array that will be prefix-scanned in block
+ * @param d_sum Buffer for sum value of each block
+ * @param m The number of C's rows
+ */
 inline
 void add_block( __global int *d_array, __global int *d_sum, const int m)
 {
     int global_id = get_global_id(0);
     int group_id = get_group_id();
 	int sum;
-
+    // load sum value
 	if (group_id != 0)
 		sum = = d_sum[group_id - 1];
 	else
 		sum = 0;
-
+    // add sum value to each block
     if(2 * global_id < m)
         d_array[2 * global_id] += sum;
     if(2 * global_id + 1 < m)
